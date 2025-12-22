@@ -67,6 +67,7 @@ class AtomicData(torch_geometric.data.Data):
         dipole_weight: Optional[torch.Tensor],  # [,]
         charges_weight: Optional[torch.Tensor],  # [,]
         polarizability_weight: Optional[torch.Tensor],  # [,]
+        atomic_energies_weight: Optional[torch.Tensor],  # [,]
         forces: Optional[torch.Tensor],  # [n_nodes, 3]
         energy: Optional[torch.Tensor],  # [, ]
         stress: Optional[torch.Tensor],  # [1,3,3]
@@ -97,6 +98,7 @@ class AtomicData(torch_geometric.data.Data):
         assert virials_weight is None or len(virials_weight.shape) == 0
         assert dipole_weight is None or dipole_weight.shape == (1, 3), dipole_weight
         assert charges_weight is None or len(charges_weight.shape) == 0
+        assert atomic_energies_weight is None or len(atomic_energies_weight.shape) == 0
         assert cell is None or cell.shape == (3, 3)
         assert forces is None or forces.shape == (num_nodes, 3)
         assert energy is None or len(energy.shape) == 0
@@ -128,6 +130,7 @@ class AtomicData(torch_geometric.data.Data):
             "dipole_weight": dipole_weight,
             "charges_weight": charges_weight,
             "polarizability_weight": polarizability_weight,
+            "atomic_energies_weight": atomic_energies_weight,
             "forces": forces,
             "energy": energy,
             "stress": stress,
@@ -256,6 +259,15 @@ class AtomicData(torch_geometric.data.Data):
             )
         elif len(polarizability_weight.shape) == 2:
             polarizability_weight = polarizability_weight.unsqueeze(0)
+
+        atomic_energies_weight = (
+            torch.tensor(
+                config.property_weights.get("atomic_energies"),
+                dtype=torch.get_default_dtype(),
+            )
+            if config.property_weights.get("atomic_energies") is not None
+            else torch.tensor(1.0, dtype=torch.get_default_dtype())
+        )
         forces = (
             torch.tensor(
                 config.properties.get("forces"), dtype=torch.get_default_dtype()
@@ -360,6 +372,7 @@ class AtomicData(torch_geometric.data.Data):
             dipole_weight=dipole_weight,
             charges_weight=charges_weight,
             polarizability_weight=polarizability_weight,
+            atomic_energies_weight=atomic_energies_weight,
             forces=forces,
             energy=energy,
             stress=stress,

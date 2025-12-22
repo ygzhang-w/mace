@@ -566,22 +566,22 @@ def get_atomic_energies(E0s, train_collection, z_table) -> dict:
                 ) from e
         elif E0s.lower() == "average_ei":
             logging.info(
-                "Computing average Atomic Energies from atomic_energy property"
+                "Computing average Atomic Energies from atomic_energies property"
             )
             try:
                 assert train_collection is not None, "Training collection is required for average_ei"
-                # Check that all configurations have atomic_energy property
+                # Check that all configurations have atomic_energies property
                 for i, config in enumerate(train_collection):
-                    if config.properties.get("atomic_energy") is None:
+                    if config.properties.get("atomic_energies") is None:
                         raise RuntimeError(
-                            f"Configuration {i} does not have 'atomic_energy' property. "
-                            f"All configurations must have 'atomic_energy' for 'average_ei' strategy."
+                            f"Configuration {i} does not have 'atomic_energies' property. "
+                            f"All configurations must have 'atomic_energies' for 'average_ei' strategy."
                         )
-                # Compute average atomic_energy per element
+                # Compute average atomic_energies per element
                 atomic_energy_sums: Dict[int, float] = {}
                 atomic_energy_counts: Dict[int, int] = {}
                 for config in train_collection:
-                    atomic_energies = config.properties["atomic_energy"]
+                    atomic_energies = config.properties["atomic_energies"]
                     atomic_numbers = config.atomic_numbers
                     for z, e in zip(atomic_numbers, atomic_energies):
                         z = int(z)
@@ -673,12 +673,12 @@ def get_loss_fn(
         loss_fn = modules.WeightedEnergyForcesAtomicEnergiesLoss(
             energy_weight=args.energy_weight,
             forces_weight=args.forces_weight,
-            atomic_energies_weight=args.atomic_energy_weight,
+            atomic_energies_weight=args.atomic_energies_weight,
         )
     elif args.loss == "weighted_fei":
         loss_fn = modules.WeightedForcesAtomicEnergyLoss(
             forces_weight=args.forces_weight,
-            atomic_energies_weight=args.atomic_energy_weight,
+            atomic_energies_weight=args.atomic_energies_weight,
         )
     elif args.loss == "forces_only":
         loss_fn = modules.WeightedForcesLoss(forces_weight=args.forces_weight)

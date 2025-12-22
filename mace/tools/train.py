@@ -144,6 +144,22 @@ def valid_err_log(
         logging.info(
             f"{inintial_phrase}: head: {valid_loader_name}, loss={valid_loss:8.8f}, RMSE_E_per_atom={error_e:8.2f} meV, RMSE_F={error_f:8.2f} meV / A, RMSE_Mu_per_atom={error_mu:8.2f} mDebye",
         )
+    elif log_errors == "PerAtomRMSE_ei":
+        error_e = eval_metrics["rmse_e_per_atom"] * 1e3
+        error_f = eval_metrics["rmse_f"] * 1e3
+        log_msg = f"{inintial_phrase}: head: {valid_loader_name}, loss={valid_loss:8.8f}, RMSE_E_per_atom={error_e:8.2f} meV, RMSE_F={error_f:8.2f} meV / A"
+        if eval_metrics.get("rmse_ei") is not None:
+            error_ei = eval_metrics["rmse_ei"] * 1e3
+            log_msg += f", RMSE_Ei={error_ei:8.2f} meV"
+        logging.info(log_msg)
+    elif log_errors == "PerAtomMAE_ei":
+        error_e = eval_metrics["mae_e_per_atom"] * 1e3
+        error_f = eval_metrics["mae_f"] * 1e3
+        log_msg = f"{inintial_phrase}: head: {valid_loader_name}, loss={valid_loss:8.8f}, MAE_E_per_atom={error_e:8.2f} meV, MAE_F={error_f:8.2f} meV / A"
+        if eval_metrics.get("mae_ei") is not None:
+            error_ei = eval_metrics["mae_ei"] * 1e3
+            log_msg += f", MAE_Ei={error_ei:8.2f} meV"
+        logging.info(log_msg)
 
 
 def train(
@@ -606,6 +622,9 @@ class MACELoss(Metric):
         self.add_state(
             "delta_polarizability_per_atom", default=[], dist_reduce_fx="cat"
         )
+        self.add_state("eis", default=[], dist_reduce_fx="cat")
+        self.add_state("delta_eis", default=[], dist_reduce_fx="cat")
+        self.add_state("atomic_energies_computed", default=torch.tensor(0.0), dist_reduce_fx="sum")
 
     def update(self, batch, output):  # pylint: disable=arguments-differ
         loss = self.loss_fn(pred=output, ref=batch)
@@ -675,6 +694,12 @@ class MACELoss(Metric):
                 batch.weight,
                 batch.polarizability_weight,
                 spread_quantity_vector=False,
+            )
+        if output.get("node_energy") is not None and batch.atomic_energies is not None:
+            self.eis.append(batch.atomic_energies)
+            self.delta_eis.append(batch.atomic_energies - output["node_energy"].unsqueeze(-1))
+            self.atomic_energies_computed += filter_nonzero_weight(
+                batch, self.delta_eis, batch.weight, batch.atomic_energies_weight, spread_atoms=True
             )
 
     def convert(self, delta: Union[torch.Tensor, List[torch.Tensor]]) -> np.ndarray:
@@ -752,5 +777,11 @@ class MACELoss(Metric):
                 delta_polarizability_per_atom
             )
             aux["q95_polarizability"] = compute_q95(delta_polarizability)
+        # Atomic energies
+        if self.atomic_energies_computed:
+            eis = self.convert(self.eis)
+            delta_eis = self.convert(self.delta_eis)
+            aux["mae_ei"] = compute_mae(delta_eis)
+            aux["rmse_ei"] = compute_rmse(delta_eis)
 
         return aux["loss"], aux

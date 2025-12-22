@@ -113,6 +113,34 @@ def weighted_mean_squared_virials(
 
 
 # ------------------------------------------------------------------------------
+# Atomic Energy Loss Functions
+# ------------------------------------------------------------------------------
+
+
+def weighted_mean_squared_error_atomic_energies(
+    ref: Batch, pred: TensorDict, ddp: Optional[bool] = None
+) -> torch.Tensor:
+    """
+    Compute weighted mean squared error for atomic energies.
+    Reference atomic energies are expected in ref["atomic_energies"] with shape [n_atoms,]
+    Predicted atomic energies are from pred["node_energy"] with shape [n_atoms,]
+    """
+    # Repeat per-graph weights to per-atom level.
+    configs_weight = torch.repeat_interleave(
+        ref.weight, ref.ptr[1:] - ref.ptr[:-1]
+    ).unsqueeze(-1)
+    configs_atomic_energies_weight = torch.repeat_interleave(
+        ref.atomic_energy_weight, ref.ptr[1:] - ref.ptr[:-1]
+    ).unsqueeze(-1)
+    raw_loss = (
+        configs_weight
+        * configs_atomic_energies_weight
+        * torch.square(ref["atomic_energies"] - pred["node_energy"].unsqueeze(-1))
+    )
+    return reduce_loss(raw_loss, ddp)
+
+
+# ------------------------------------------------------------------------------
 # Forces Loss Functions
 # ------------------------------------------------------------------------------
 
@@ -596,6 +624,74 @@ class WeightedEnergyForcesDipoleLoss(torch.nn.Module):
         return (
             f"{self.__class__.__name__}(energy_weight={self.energy_weight:.3f}, "
             f"forces_weight={self.forces_weight:.3f}, dipole_weight={self.dipole_weight:.3f})"
+        )
+
+
+class WeightedEnergyForcesAtomicEnergiesLoss(torch.nn.Module):
+    """Loss combining energy, forces, and atomic energies."""
+
+    def __init__(self, energy_weight=1.0, forces_weight=1.0, atomic_energies_weight=1.0) -> None:
+        super().__init__()
+        self.register_buffer(
+            "energy_weight",
+            torch.tensor(energy_weight, dtype=torch.get_default_dtype()),
+        )
+        self.register_buffer(
+            "forces_weight",
+            torch.tensor(forces_weight, dtype=torch.get_default_dtype()),
+        )
+        self.register_buffer(
+            "atomic_energies_weight",
+            torch.tensor(atomic_energies_weight, dtype=torch.get_default_dtype()),
+        )
+
+    def forward(
+        self, ref: Batch, pred: TensorDict, ddp: Optional[bool] = None
+    ) -> torch.Tensor:
+        loss_energy = weighted_mean_squared_error_energy(ref, pred, ddp)
+        loss_forces = mean_squared_error_forces(ref, pred, ddp)
+        loss_atomic_energies = weighted_mean_squared_error_atomic_energies(ref, pred, ddp)
+        return (
+            self.energy_weight * loss_energy
+            + self.forces_weight * loss_forces
+            + self.atomic_energies_weight * loss_atomic_energies
+        )
+
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__}(energy_weight={self.energy_weight:.3f}, "
+            f"forces_weight={self.forces_weight:.3f}, atomic_energies_weight={self.atomic_energies_weight:.3f})"
+        )
+
+
+class WeightedForcesAtomicEnergiesLoss(torch.nn.Module):
+    """Loss combining forces and atomic energies (without total energy)."""
+
+    def __init__(self, forces_weight=1.0, atomic_energies_weight=1.0) -> None:
+        super().__init__()
+        self.register_buffer(
+            "forces_weight",
+            torch.tensor(forces_weight, dtype=torch.get_default_dtype()),
+        )
+        self.register_buffer(
+            "atomic_energies_weight",
+            torch.tensor(atomic_energies_weight, dtype=torch.get_default_dtype()),
+        )
+
+    def forward(
+        self, ref: Batch, pred: TensorDict, ddp: Optional[bool] = None
+    ) -> torch.Tensor:
+        loss_forces = mean_squared_error_forces(ref, pred, ddp)
+        loss_atomic_energies = weighted_mean_squared_error_atomic_energies(ref, pred, ddp)
+        return (
+            self.forces_weight * loss_forces
+            + self.atomic_energies_weight * loss_atomic_energies
+        )
+
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__}(forces_weight={self.forces_weight:.3f}, "
+            f"atomic_energies_weight={self.atomic_energies_weight:.3f})"
         )
 
 

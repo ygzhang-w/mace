@@ -585,6 +585,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=DefaultKeys.CHARGES.value,
     )
     parser.add_argument(
+        "--atomic_energy_key",
+        help="Key of atomic energies in training xyz",
+        type=str,
+        default=DefaultKeys.ATOMIC_ENERGY.value,
+    )
+    parser.add_argument(
         "--elec_temp_key",
         help="Key of electronic temperature in training xyz",
         type=str,
@@ -640,6 +646,8 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         choices=[
             "ef",
             "weighted",
+            "weighted_efei",
+            "weighted_fei"
             "forces_only",
             "virials",
             "stress",
@@ -717,6 +725,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--polarizability_weight",
         help="weight of polarizability loss",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--atomic_energies_weight",
+        help="weight of atomic energy loss",
         type=float,
         default=1.0,
     )
@@ -1071,6 +1085,12 @@ def build_preprocess_arg_parser() -> argparse.ArgumentParser:
         help="Key of atomic charges in training xyz",
         type=str,
         default=DefaultKeys.CHARGES.value,
+    )
+    parser.add_argument(
+        "--atomic_energy_key",
+        help="Key of atomic energies in training xyz",
+        type=str,
+        default=DefaultKeys.ATOMIC_ENERGY.value,
     )
     parser.add_argument(
         "--atomic_numbers",

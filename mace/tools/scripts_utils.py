@@ -564,6 +564,40 @@ def get_atomic_energies(E0s, train_collection, z_table) -> dict:
                 raise RuntimeError(
                     f"Could not compute average E0s if no training xyz given, error {e} occured"
                 ) from e
+        elif E0s.lower() == "average_ei":
+            logging.info(
+                "Computing average Atomic Energies from atomic_energy property"
+            )
+            try:
+                assert train_collection is not None, "Training collection is required for average_ei"
+                # Check that all configurations have atomic_energy property
+                for i, config in enumerate(train_collection):
+                    if config.properties.get("atomic_energy") is None:
+                        raise RuntimeError(
+                            f"Configuration {i} does not have 'atomic_energy' property. "
+                            f"All configurations must have 'atomic_energy' for 'average_ei' strategy."
+                        )
+                # Compute average atomic_energy per element
+                atomic_energy_sums: Dict[int, float] = {}
+                atomic_energy_counts: Dict[int, int] = {}
+                for config in train_collection:
+                    atomic_energies = config.properties["atomic_energy"]
+                    atomic_numbers = config.atomic_numbers
+                    for z, e in zip(atomic_numbers, atomic_energies):
+                        z = int(z)
+                        if z not in atomic_energy_sums:
+                            atomic_energy_sums[z] = 0.0
+                            atomic_energy_counts[z] = 0
+                        atomic_energy_sums[z] += float(e)
+                        atomic_energy_counts[z] += 1
+                atomic_energies_dict = {
+                    z: atomic_energy_sums[z] / atomic_energy_counts[z]
+                    for z in atomic_energy_sums
+                }
+            except Exception as e:
+                raise RuntimeError(
+                    f"Could not compute average_ei: {e}"
+                ) from e
         else:
             if E0s.endswith(".json"):
                 logging.info(f"Loading atomic energies from {E0s}")
@@ -634,6 +668,17 @@ def get_loss_fn(
     if args.loss == "weighted":
         loss_fn = modules.WeightedEnergyForcesLoss(
             energy_weight=args.energy_weight, forces_weight=args.forces_weight
+        )
+    elif args.loss == "weighted_efei":
+        loss_fn = modules.WeightedEnergyForcesAtomicEnergiesLoss(
+            energy_weight=args.energy_weight,
+            forces_weight=args.forces_weight,
+            atomic_energies_weight=args.atomic_energy_weight,
+        )
+    elif args.loss == "weighted_fei":
+        loss_fn = modules.WeightedForcesAtomicEnergyLoss(
+            forces_weight=args.forces_weight,
+            atomic_energies_weight=args.atomic_energy_weight,
         )
     elif args.loss == "forces_only":
         loss_fn = modules.WeightedForcesLoss(forces_weight=args.forces_weight)

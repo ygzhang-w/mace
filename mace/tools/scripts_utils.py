@@ -676,7 +676,7 @@ def get_loss_fn(
             atomic_energies_weight=args.atomic_energies_weight,
         )
     elif args.loss == "weighted_fei":
-        loss_fn = modules.WeightedForcesAtomicEnergyLoss(
+        loss_fn = modules.WeightedForcesAtomicEnergiesLoss(
             forces_weight=args.forces_weight,
             atomic_energies_weight=args.atomic_energies_weight,
         )

@@ -649,7 +649,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
             "ef",
             "weighted",
             "weighted_efei",
-            "weighted_fei"
+            "weighted_fei",
             "forces_only",
             "virials",
             "stress",

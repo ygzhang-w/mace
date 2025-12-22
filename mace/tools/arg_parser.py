@@ -116,10 +116,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         type=str,
         choices=[
             "PerAtomRMSE",
+            "PerAtomRMSE_ei",
             "TotalRMSE",
             "PerAtomRMSEstressvirials",
             "PerAtomMAEstressvirials",
             "PerAtomMAE",
+            "PerAtomMAE_ei",
             "TotalMAE",
             "DipoleRMSE",
             "DipoleMAE",
@@ -585,10 +587,10 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=DefaultKeys.CHARGES.value,
     )
     parser.add_argument(
-        "--atomic_energy_key",
+        "--atomic_energies_key",
         help="Key of atomic energies in training xyz",
         type=str,
-        default=DefaultKeys.ATOMIC_ENERGY.value,
+        default=DefaultKeys.ATOMIC_ENERGIES.value,
     )
     parser.add_argument(
         "--elec_temp_key",
@@ -1087,10 +1089,10 @@ def build_preprocess_arg_parser() -> argparse.ArgumentParser:
         default=DefaultKeys.CHARGES.value,
     )
     parser.add_argument(
-        "--atomic_energy_key",
+        "--atomic_energies_key",
         help="Key of atomic energies in training xyz",
         type=str,
-        default=DefaultKeys.ATOMIC_ENERGY.value,
+        default=DefaultKeys.ATOMIC_ENERGIES.value,
     )
     parser.add_argument(
         "--atomic_numbers",

@@ -125,12 +125,21 @@ def weighted_mean_squared_error_atomic_energies(
     Reference atomic energies are expected in ref["atomic_energies"] with shape [n_atoms,]
     Predicted atomic energies are from pred["node_energy"] with shape [n_atoms,]
     """
+    # Check if atomic_energies is available
+    if not hasattr(ref, "atomic_energies") or getattr(ref, "atomic_energies", None) is None:
+        raise ValueError(
+            "Atomic energies loss requires 'atomic_energies' data in the training set, "
+            "but it is missing. Please either: \n"
+            "1. Provide training data with 'atomic_energies' field, or \n"
+            "2. Use a different loss function (e.g., --loss weighted) that does not require atomic energies."
+        )
+    
     # Repeat per-graph weights to per-atom level.
     configs_weight = torch.repeat_interleave(
         ref.weight, ref.ptr[1:] - ref.ptr[:-1]
     ).unsqueeze(-1)
     configs_atomic_energies_weight = torch.repeat_interleave(
-        ref.atomic_energy_weight, ref.ptr[1:] - ref.ptr[:-1]
+        ref.atomic_energies_weight, ref.ptr[1:] - ref.ptr[:-1]
     ).unsqueeze(-1)
     raw_loss = (
         configs_weight

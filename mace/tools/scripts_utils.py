@@ -55,6 +55,7 @@ def get_dataset_from_xyz(
     head_name: str = "Default",
     no_data_ok: bool = False,
     prefix: Optional[str] = None,
+    config_weight_override: Optional[float] = None,
 ) -> Tuple[SubsetCollection, Optional[Dict[int, float]]]:
     """
     Load training, validation, and test datasets from xyz files.
@@ -111,6 +112,7 @@ def get_dataset_from_xyz(
             keep_isolated_atoms=keep_isolated_atoms,
             head_name=head_name,
             no_data_ok=no_data_ok,
+            config_weight_override=config_weight_override,
         )
         all_train_configs.extend(train_configs)
 
@@ -138,6 +140,7 @@ def get_dataset_from_xyz(
                 key_specification=key_specification,
                 extract_atomic_energies=False,
                 head_name=head_name,
+                config_weight_override=config_weight_override,
             )
             all_valid_configs.extend(valid_configs)
             log_dataset_contents(
@@ -166,6 +169,7 @@ def get_dataset_from_xyz(
                 key_specification=key_specification,
                 extract_atomic_energies=False,
                 head_name=head_name,
+                config_weight_override=config_weight_override,
             )
             all_test_configs.extend(test_configs)
 

@@ -55,6 +55,8 @@ class HeadConfig:
     dipole_weight: Optional[float] = None
     huber_delta: Optional[float] = None
     atomic_energies_weight: Optional[float] = None
+    # Per-head configuration-level weight override
+    config_weight: Optional[float] = None
 
 
 def dict_head_to_dataclass(
@@ -97,6 +99,8 @@ def dict_head_to_dataclass(
         dipole_weight=head.get("dipole_weight", None),
         huber_delta=head.get("huber_delta", None),
         atomic_energies_weight=head.get("atomic_energies_weight", None),
+        # Per-head configuration-level weight override
+        config_weight=head.get("config_weight", None),
     )
 
 
@@ -231,6 +235,7 @@ def assemble_replay_data(
                 and head_config_pt.head_name == "pt_head"
             ),
             prefix=args.name,
+            config_weight_override=head_config_pt.config_weight,
         )
         return collections_mp
     except Exception as exc:

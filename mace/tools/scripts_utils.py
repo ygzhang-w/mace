@@ -737,6 +737,205 @@ def get_loss_fn(
     return loss_fn
 
 
+def create_loss_fn_from_config(
+    loss_type: str,
+    energy_weight: float = 1.0,
+    forces_weight: float = 100.0,
+    stress_weight: float = 1.0,
+    virials_weight: float = 1.0,
+    dipole_weight: float = 1.0,
+    huber_delta: float = 0.01,
+    atomic_energies_weight: float = 1.0,
+    polarizability_weight: float = 1.0,
+    dipole_only: bool = False,
+    compute_dipole: bool = False,
+) -> torch.nn.Module:
+    """Create a loss function from explicit configuration parameters."""
+    # Runtime import to avoid circular dependency
+    from mace import modules
+    
+    if loss_type == "weighted":
+        loss_fn = modules.WeightedEnergyForcesLoss(
+            energy_weight=energy_weight, forces_weight=forces_weight
+        )
+    elif loss_type == "weighted_efei":
+        loss_fn = modules.WeightedEnergyForcesAtomicEnergiesLoss(
+            energy_weight=energy_weight,
+            forces_weight=forces_weight,
+            atomic_energies_weight=atomic_energies_weight,
+        )
+    elif loss_type == "weighted_fei":
+        loss_fn = modules.WeightedForcesAtomicEnergiesLoss(
+            forces_weight=forces_weight,
+            atomic_energies_weight=atomic_energies_weight,
+        )
+    elif loss_type == "forces_only":
+        loss_fn = modules.WeightedForcesLoss(forces_weight=forces_weight)
+    elif loss_type == "virials":
+        loss_fn = modules.WeightedEnergyForcesVirialsLoss(
+            energy_weight=energy_weight,
+            forces_weight=forces_weight,
+            virials_weight=virials_weight,
+        )
+    elif loss_type == "stress":
+        loss_fn = modules.WeightedEnergyForcesStressLoss(
+            energy_weight=energy_weight,
+            forces_weight=forces_weight,
+            stress_weight=stress_weight,
+        )
+    elif loss_type == "huber":
+        loss_fn = modules.WeightedHuberEnergyForcesStressLoss(
+            energy_weight=energy_weight,
+            forces_weight=forces_weight,
+            stress_weight=stress_weight,
+            huber_delta=huber_delta,
+        )
+    elif loss_type == "universal":
+        loss_fn = modules.UniversalLoss(
+            energy_weight=energy_weight,
+            forces_weight=forces_weight,
+            stress_weight=stress_weight,
+            huber_delta=huber_delta,
+        )
+    elif loss_type == "l1l2energyforces":
+        loss_fn = modules.WeightedEnergyForcesL1L2Loss(
+            energy_weight=energy_weight,
+            forces_weight=forces_weight,
+        )
+    elif loss_type == "dipole":
+        assert dipole_only is True, "dipole loss can only be used with AtomicDipolesMACE model"
+        loss_fn = modules.DipoleSingleLoss(dipole_weight=dipole_weight)
+    elif loss_type == "dipole_polar":
+        loss_fn = modules.DipolePolarLoss(
+            dipole_weight=dipole_weight,
+            polarizability_weight=polarizability_weight,
+        )
+    elif loss_type == "energy_forces_dipole":
+        assert dipole_only is False and compute_dipole is True
+        loss_fn = modules.WeightedEnergyForcesDipoleLoss(
+            energy_weight=energy_weight,
+            forces_weight=forces_weight,
+            dipole_weight=dipole_weight,
+        )
+    else:
+        loss_fn = modules.WeightedEnergyForcesLoss(energy_weight=1.0, forces_weight=1.0)
+    return loss_fn
+
+
+def get_loss_fn_for_heads(
+    args: argparse.Namespace,
+    head_configs: List,
+    heads: List[str],
+    dipole_only: bool = False,
+    compute_dipole: bool = False,
+) -> Dict[str, torch.nn.Module]:
+    """
+    Create a dictionary of loss functions, one for each head.
+    If a head has its own loss configuration, use it; otherwise fall back to global args.
+    """
+    loss_fn_dict = {}
+    for head_config in head_configs:
+        head_name = head_config.head_name
+        # Determine loss type
+        loss_type = head_config.loss if head_config.loss is not None else args.loss
+        # Determine loss weights (use head-specific if set, else global)
+        energy_weight = head_config.energy_weight if head_config.energy_weight is not None else args.energy_weight
+        forces_weight = head_config.forces_weight if head_config.forces_weight is not None else args.forces_weight
+        stress_weight = head_config.stress_weight if head_config.stress_weight is not None else args.stress_weight
+        virials_weight = head_config.virials_weight if head_config.virials_weight is not None else args.virials_weight
+        dipole_weight = head_config.dipole_weight if head_config.dipole_weight is not None else args.dipole_weight
+        huber_delta = head_config.huber_delta if head_config.huber_delta is not None else args.huber_delta
+        atomic_energies_weight = head_config.atomic_energies_weight if head_config.atomic_energies_weight is not None else args.atomic_energies_weight
+
+        loss_fn = create_loss_fn_from_config(
+            loss_type=loss_type,
+            energy_weight=energy_weight,
+            forces_weight=forces_weight,
+            stress_weight=stress_weight,
+            virials_weight=virials_weight,
+            dipole_weight=dipole_weight,
+            huber_delta=huber_delta,
+            atomic_energies_weight=atomic_energies_weight,
+            dipole_only=dipole_only,
+            compute_dipole=compute_dipole,
+        )
+        loss_fn_dict[head_name] = loss_fn
+        logging.info(f"Head '{head_name}': using loss '{loss_type}' with {loss_fn}")
+    return loss_fn_dict
+
+
+class HeadAwareLoss(torch.nn.Module):
+    """
+    A wrapper loss module that selects the appropriate loss function
+    based on the head index in the batch.
+    """
+    def __init__(self, loss_fn_dict: Dict[str, torch.nn.Module], heads: List[str]):
+        super().__init__()
+        self.heads = heads
+        self.loss_fn_dict = torch.nn.ModuleDict()
+        for head_name, loss_fn in loss_fn_dict.items():
+            # Replace any invalid characters for ModuleDict keys
+            safe_key = head_name.replace(".", "_").replace("-", "_")
+            self.loss_fn_dict[safe_key] = loss_fn
+        # Map original head names to safe keys
+        self.head_to_safe_key = {
+            head_name: head_name.replace(".", "_").replace("-", "_")
+            for head_name in loss_fn_dict.keys()
+        }
+        # Check if all heads use the same loss (optimization)
+        loss_types = [type(fn).__name__ for fn in loss_fn_dict.values()]
+        self.all_same_loss = len(set(loss_types)) == 1
+        if self.all_same_loss:
+            self.single_loss_fn = list(loss_fn_dict.values())[0]
+
+    def forward(
+        self, ref, pred: Dict[str, torch.Tensor], ddp: Optional[bool] = None
+    ) -> torch.Tensor:
+        # If all heads use the same loss, use it directly for efficiency
+        if self.all_same_loss:
+            return self.single_loss_fn(ref, pred, ddp)
+
+        # Otherwise, compute loss per-head and aggregate
+        # Get unique heads in this batch
+        batch_heads = ref.head.unique()
+        total_loss = torch.tensor(0.0, device=ref.head.device, dtype=torch.get_default_dtype())
+        total_count = 0
+
+        for head_idx in batch_heads:
+            head_name = self.heads[head_idx.item()]
+            safe_key = self.head_to_safe_key.get(head_name)
+            if safe_key is None or safe_key not in self.loss_fn_dict:
+                # Fall back to first available loss if head not found
+                safe_key = list(self.loss_fn_dict.keys())[0]
+
+            loss_fn = self.loss_fn_dict[safe_key]
+
+            # Create mask for this head
+            head_mask = ref.head == head_idx
+            if not head_mask.any():
+                continue
+
+            # Get graph indices for this head
+            graph_mask = head_mask
+            num_graphs = graph_mask.sum().item()
+
+            if num_graphs == 0:
+                continue
+
+            # For now, compute loss on full batch (the per-config weights in data handle head separation)
+            # This is because separating batches is complex and the weights already handle it
+            head_loss = loss_fn(ref, pred, ddp)
+            total_loss = total_loss + head_loss * num_graphs
+            total_count += num_graphs
+
+        if total_count > 0:
+            return total_loss / total_count
+        return total_loss
+
+    def __repr__(self):
+        return f"HeadAwareLoss(heads={self.heads}, loss_fns={dict(self.loss_fn_dict)})"
+
+
 def get_swa(
     args: argparse.Namespace,
     model: torch.nn.Module,

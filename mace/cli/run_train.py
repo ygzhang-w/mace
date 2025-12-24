@@ -51,6 +51,7 @@ from mace.tools.run_train_utils import (
     normalize_file_paths,
 )
 from mace.tools.scripts_utils import (
+    HeadAwareLoss,
     LRScheduler,
     SubsetCollection,
     check_path_ase_read,
@@ -63,6 +64,7 @@ from mace.tools.scripts_utils import (
     get_dataset_from_xyz,
     get_files_with_suffix,
     get_loss_fn,
+    get_loss_fn_for_heads,
     get_optimizer,
     get_params_options,
     get_swa,
@@ -70,7 +72,7 @@ from mace.tools.scripts_utils import (
     remove_pt_head,
     setup_wandb,
 )
-from mace.tools.tables_utils import create_error_table
+from mace.tools.tables_utils import create_error_table, create_error_tables_for_heads
 from mace.tools.utils import AtomicNumberTable
 
 
@@ -698,6 +700,25 @@ def run(args) -> None:
         )
 
     loss_fn = get_loss_fn(args, dipole_only, args.compute_dipole)
+
+    # Build per-head loss functions if any head has custom loss configuration
+    has_custom_loss = any(
+        head_config.loss is not None or head_config.energy_weight is not None
+        for head_config in head_configs
+    )
+    if has_custom_loss:
+        logging.info("Using per-head loss configuration")
+        loss_fn_dict = get_loss_fn_for_heads(
+            args, head_configs, heads, dipole_only, args.compute_dipole
+        )
+        loss_fn = HeadAwareLoss(loss_fn_dict, heads)
+
+    # Build per-head error_table types 
+    head_error_table_types = {}
+    for head_config in head_configs:
+        if head_config.error_table is not None:
+            head_error_table_types[head_config.head_name] = head_config.error_table
+
     args.avg_num_neighbors = get_avg_num_neighbors(head_configs, args, train_loader, device)
 
     # Model
@@ -878,6 +899,7 @@ def run(args) -> None:
         plotter=plotter,
         train_sampler=train_sampler,
         rank=rank,
+        head_error_table_types=head_error_table_types,
     )
 
     logging.info("")
@@ -1036,31 +1058,65 @@ def run(args) -> None:
         skip_heads = args.skip_evaluate_heads.split(",") if args.skip_evaluate_heads else []
         if skip_heads:
             logging.info(f"Skipping evaluation for heads: {skip_heads}")
-        table_train_valid = create_error_table(
-            table_type=args.error_table,
-            all_data_loaders=train_valid_data_loader,
-            model=model_to_evaluate,
-            loss_fn=loss_fn,
-            output_args=output_args,
-            log_wandb=args.wandb,
-            device=device,
-            distributed=args.distributed,
-            skip_heads=skip_heads,
-        )
-        logging.info("Error-table on TRAIN and VALID:\n" + str(table_train_valid))
 
-        if test_data_loader:
-            table_test = create_error_table(
+        # Use per-head error_table types if configured
+        if head_error_table_types:
+            logging.info(f"Using per-head error_table types: {head_error_table_types}")
+            tables_train_valid = create_error_tables_for_heads(
+                default_table_type=args.error_table,
+                head_error_table_types=head_error_table_types,
+                all_data_loaders=train_valid_data_loader,
+                model=model_to_evaluate,
+                loss_fn=loss_fn_dict if loss_fn_dict else loss_fn,
+                output_args=output_args,
+                log_wandb=args.wandb,
+                device=device,
+                distributed=args.distributed,
+                skip_heads=skip_heads,
+            )
+            for table_type, table in tables_train_valid.items():
+                logging.info(f"Error-table ({table_type}) on TRAIN and VALID:\n" + str(table))
+        else:
+            table_train_valid = create_error_table(
                 table_type=args.error_table,
-                all_data_loaders=test_data_loader,
+                all_data_loaders=train_valid_data_loader,
                 model=model_to_evaluate,
                 loss_fn=loss_fn,
                 output_args=output_args,
                 log_wandb=args.wandb,
                 device=device,
                 distributed=args.distributed,
+                skip_heads=skip_heads,
             )
-            logging.info("Error-table on TEST:\n" + str(table_test))
+            logging.info("Error-table on TRAIN and VALID:\n" + str(table_train_valid))
+
+        if test_data_loader:
+            if head_error_table_types:
+                tables_test = create_error_tables_for_heads(
+                    default_table_type=args.error_table,
+                    head_error_table_types=head_error_table_types,
+                    all_data_loaders=test_data_loader,
+                    model=model_to_evaluate,
+                    loss_fn=loss_fn_dict if loss_fn_dict else loss_fn,
+                    output_args=output_args,
+                    log_wandb=args.wandb,
+                    device=device,
+                    distributed=args.distributed,
+                )
+                for table_type, table in tables_test.items():
+                    logging.info(f"Error-table ({table_type}) on TEST:\n" + str(table))
+            else:
+                table_test = create_error_table(
+                    table_type=args.error_table,
+                    all_data_loaders=test_data_loader,
+                    model=model_to_evaluate,
+                    loss_fn=loss_fn,
+                    output_args=output_args,
+                    log_wandb=args.wandb,
+                    device=device,
+                    distributed=args.distributed,
+                )
+                logging.info("Error-table on TEST:\n" + str(table_test))
         if args.plot:
             try:
                 plotter = TrainingPlotter(

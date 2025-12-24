@@ -188,6 +188,7 @@ def train(
     distributed_model: Optional[DistributedDataParallel] = None,
     train_sampler: Optional[DistributedSampler] = None,
     rank: Optional[int] = 0,
+    head_error_table_types: Optional[Dict[str, str]] = None,
 ):
     lowest_loss = np.inf
     valid_loss = np.inf
@@ -199,6 +200,14 @@ def train(
 
     if max_grad_norm is not None:
         logging.info(f"Using gradient clipping with tolerance={max_grad_norm:.3f}")
+
+    # Log per-head error table types if configured
+    if head_error_table_types:
+        logging.info("Per-head error_table types configured:")
+        for head_name, error_table_type in head_error_table_types.items():
+            logging.info(f"  {head_name}: {error_table_type}")
+    else:
+        logging.info(f"Using global error_table type: {log_errors}")
 
     logging.info("")
     logging.info("===========TRAINING===========")
@@ -215,8 +224,13 @@ def train(
             output_args=output_args,
             device=device,
         )
+        # Determine the error table type for this head
+        head_name = valid_loader_name.replace("valid_", "") if valid_loader_name.startswith("valid_") else valid_loader_name
+        error_table_type = log_errors  # default to global error_table
+        if head_error_table_types and head_name in head_error_table_types:
+            error_table_type = head_error_table_types[head_name]
         valid_err_log(
-            valid_loss_head, eval_metrics, logger, log_errors, None, valid_loader_name
+            valid_loss_head, eval_metrics, logger, error_table_type, None, valid_loader_name
         )
     valid_loss = valid_loss_head  # consider only the last head for the checkpoint
 
@@ -284,11 +298,16 @@ def train(
                         device=device,
                     )
                     if rank == 0:
+                        # Determine the error table type for this head
+                        head_name = valid_loader_name.replace("valid_", "") if valid_loader_name.startswith("valid_") else valid_loader_name
+                        error_table_type = log_errors  # default to global error_table
+                        if head_error_table_types and head_name in head_error_table_types:
+                            error_table_type = head_error_table_types[head_name]
                         valid_err_log(
                             valid_loss_head,
                             eval_metrics,
                             logger,
-                            log_errors,
+                            error_table_type,
                             epoch,
                             valid_loader_name,
                         )

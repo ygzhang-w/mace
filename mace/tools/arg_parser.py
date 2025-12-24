@@ -452,7 +452,10 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--heads",
-        help="Dict of heads: containing individual files and E0s",
+        help="Dict of heads: containing individual files, E0s, loss, error_table, and loss weights. "
+             "Each head can specify: train_file, valid_file, test_file, E0s, statistics_file, "
+             "loss (type of loss function), error_table (type of error table), "
+             "energy_weight, forces_weight, stress_weight, virials_weight, dipole_weight, huber_delta, atomic_energies_weight",
         type=str,
         default=None,
         required=False,

@@ -44,6 +44,17 @@ class HeadConfig:
     train_loader: Optional[torch.utils.data.DataLoader] = None
     z_table: Optional[Any] = None
     atomic_energies_dict: Optional[Dict[str, float]] = None
+    # Per-head loss and error_table configuration
+    loss: Optional[str] = None
+    error_table: Optional[str] = None
+    # Per-head loss weights
+    energy_weight: Optional[float] = None
+    forces_weight: Optional[float] = None
+    stress_weight: Optional[float] = None
+    virials_weight: Optional[float] = None
+    dipole_weight: Optional[float] = None
+    huber_delta: Optional[float] = None
+    atomic_energies_weight: Optional[float] = None
 
 
 def dict_head_to_dataclass(
@@ -75,6 +86,17 @@ def dict_head_to_dataclass(
         avg_num_neighbors=head.get("avg_num_neighbors", args.avg_num_neighbors),
         key_specification=head["key_specification"],
         keep_isolated_atoms=head.get("keep_isolated_atoms", args.keep_isolated_atoms),
+        # Per-head loss and error_table configuration
+        loss=head.get("loss", None),  # None means use global args.loss
+        error_table=head.get("error_table", None),  # None means use global args.error_table
+        # Per-head loss weights (None means use global args values)
+        energy_weight=head.get("energy_weight", None),
+        forces_weight=head.get("forces_weight", None),
+        stress_weight=head.get("stress_weight", None),
+        virials_weight=head.get("virials_weight", None),
+        dipole_weight=head.get("dipole_weight", None),
+        huber_delta=head.get("huber_delta", None),
+        atomic_energies_weight=head.get("atomic_energies_weight", None),
     )
 
 

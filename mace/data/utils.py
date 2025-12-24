@@ -151,6 +151,7 @@ def config_from_atoms_list(
     key_specification: KeySpecification,
     config_type_weights: Optional[Dict[str, float]] = None,
     head_name: str = "Default",
+    config_weight_override: Optional[float] = None,
 ) -> Configurations:
     """Convert list of ase.Atoms into Configurations"""
     if config_type_weights is None:
@@ -164,6 +165,7 @@ def config_from_atoms_list(
                 key_specification=key_specification,
                 config_type_weights=config_type_weights,
                 head_name=head_name,
+                config_weight_override=config_weight_override,
             )
         )
     return all_configs
@@ -174,6 +176,7 @@ def config_from_atoms(
     key_specification: KeySpecification = KeySpecification(),
     config_type_weights: Optional[Dict[str, float]] = None,
     head_name: str = "Default",
+    config_weight_override: Optional[float] = None,
 ) -> Configuration:
     """Convert ase.Atoms to Configuration"""
     if config_type_weights is None:
@@ -185,9 +188,10 @@ def config_from_atoms(
     pbc = tuple(atoms.get_pbc().tolist())
     cell = np.array(atoms.get_cell())
     config_type = atoms.info.get("config_type", "Default")
-    weight = atoms.info.get("config_weight", 1.0) * config_type_weights.get(
-        config_type, 1.0
-    )
+    base_weight = atoms.info.get("config_weight", 1.0)
+    if config_weight_override is not None:
+        base_weight = config_weight_override
+    weight = base_weight * config_type_weights.get(config_type, 1.0)
 
     properties = {}
     property_weights = {}
@@ -244,6 +248,7 @@ def load_from_xyz(
     extract_atomic_energies: bool = False,
     keep_isolated_atoms: bool = False,
     no_data_ok: bool = False,
+    config_weight_override: Optional[float] = None,
 ) -> Tuple[Dict[int, float], Configurations]:
     atoms_list = ase.io.read(file_path, index=":")
     energy_key = key_specification.info_keys["energy"]
@@ -351,6 +356,7 @@ def load_from_xyz(
         config_type_weights=config_type_weights,
         key_specification=key_specification,
         head_name=head_name,
+        config_weight_override=config_weight_override,
     )
     key_specification.info_keys["energy"] = original_energy_key
     key_specification.arrays_keys["forces"] = original_forces_key

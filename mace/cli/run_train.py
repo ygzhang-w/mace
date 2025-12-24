@@ -330,6 +330,7 @@ def run(args) -> None:
                     and head_config.head_name == "pt_head"
                 ),
                 prefix=args.name,
+                config_weight_override=head_config.config_weight,
             )
             head_config.collections = SubsetCollection(
                 train=collections.train,
@@ -529,9 +530,29 @@ def run(args) -> None:
         atomic_energies = dict_to_array(atomic_energies_dict, heads)
         for head_config in head_configs:
             try:
-                logging.info(f"Atomic Energies used (z: eV) for head {head_config.head_name}: " + "{" + ", ".join([f"{z}: {atomic_energies_dict[head_config.head_name][z]}" for z in head_config.z_table.zs]) + "}")
+                logging.info(
+                    f"Atomic Energies used (z: eV) for head {head_config.head_name}: "
+                    + "{"
+                    + ", ".join(
+                        [
+                            f"{z}: {atomic_energies_dict[head_config.head_name][z]}"
+                            for z in head_config.z_table.zs
+                        ]
+                    )
+                    + "}"
+                )
+                if getattr(head_config, "config_weight", None) is not None:
+                    logging.info(
+                        f"Config weight override for head {head_config.head_name}: {head_config.config_weight}"
+                    )
+                else:
+                    logging.info(
+                        f"Config weight for head {head_config.head_name}: using dataset config_weight"
+                    )
             except KeyError as e:
-                raise KeyError(f"Atomic number {e} not found in atomic_energies_dict for head {head_config.head_name}, add E0s for this atomic number") from e
+                raise KeyError(
+                    f"Atomic number {e} not found in atomic_energies_dict for head {head_config.head_name}, add E0s for this atomic number"
+                ) from e
 
     # Load datasets for each head, supporting multiple files per head
     valid_sets = {head: [] for head in heads}

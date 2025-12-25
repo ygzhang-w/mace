@@ -122,8 +122,8 @@ def weighted_mean_squared_error_atomic_energies(
 ) -> torch.Tensor:
     """
     Compute weighted mean squared error for atomic energies.
-    Reference atomic energies are expected in ref["atomic_energies"] with shape [n_atoms,]
-    Predicted atomic energies are from pred["node_energy"] with shape [n_atoms,]
+    Reference atomic energies are expected in ref["atomic_energies"] with shape [n_atoms, 1]
+    Predicted atomic energies are from pred["node_energy"] with shape [n_atoms, ]
     """
     # Check if atomic_energies is available
     if not hasattr(ref, "atomic_energies") or getattr(ref, "atomic_energies", None) is None:

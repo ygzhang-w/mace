@@ -26,6 +26,7 @@ from mace.cli.visualise_train import TrainingPlotter
 
 from . import torch_geometric
 from .checkpoint import CheckpointHandler, CheckpointState
+from .sam import SAM
 from .torch_tools import to_numpy
 from .utils import (
     MetricsLogger,
@@ -160,6 +161,39 @@ def valid_err_log(
             error_ei = eval_metrics["mae_ei"] * 1e3
             log_msg += f", MAE_Ei={error_ei:8.2f} meV"
         logging.info(log_msg)
+
+
+def enable_running_stats(model: torch.nn.Module):
+    """Enable BatchNorm running statistics updates.
+    
+    This function restores the momentum of all BatchNorm layers in the model,
+    allowing them to update their running statistics during forward passes.
+    
+    Args:
+        model: The neural network model.
+    """
+    for module in model.modules():
+        if isinstance(module, (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.BatchNorm3d)):
+            if hasattr(module, "backup_momentum"):
+                module.momentum = module.backup_momentum
+                delattr(module, "backup_momentum")
+
+
+def disable_running_stats(model: torch.nn.Module):
+    """Disable BatchNorm running statistics updates.
+    
+    This function sets the momentum of all BatchNorm layers to zero,
+    preventing them from updating their running statistics during forward passes.
+    This is useful for SAM's second forward pass to avoid double-counting statistics.
+    
+    Args:
+        model: The neural network model.
+    """
+    for module in model.modules():
+        if isinstance(module, (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.BatchNorm3d)):
+            if not hasattr(module, "backup_momentum"):
+                module.backup_momentum = module.momentum
+            module.momentum = 0
 
 
 def train(
@@ -397,6 +431,23 @@ def train_one_epoch(
         opt_metrics["epoch"] = epoch
         if rank == 0:
             logger.log(opt_metrics)
+    elif isinstance(optimizer, SAM):
+        for batch in data_loader:
+            _, opt_metrics = take_step_sam(
+                model=model_to_train,
+                loss_fn=loss_fn,
+                batch=batch,
+                optimizer=optimizer,
+                ema=ema,
+                output_args=output_args,
+                max_grad_norm=max_grad_norm,
+                device=device,
+                distributed=distributed,
+            )
+            opt_metrics["mode"] = "opt"
+            opt_metrics["epoch"] = epoch
+            if rank == 0:
+                logger.log(opt_metrics)
     else:
         for batch in data_loader:
             _, opt_metrics = take_step(
@@ -456,6 +507,95 @@ def take_step(
         "time": time.time() - start_time,
     }
 
+    return loss, loss_dict
+
+
+def take_step_sam(
+    model: torch.nn.Module,
+    loss_fn: torch.nn.Module,
+    batch: torch_geometric.batch.Batch,
+    optimizer: SAM,
+    ema: Optional[ExponentialMovingAverage],
+    output_args: Dict[str, bool],
+    max_grad_norm: Optional[float],
+    device: torch.device,
+    distributed: bool = False,
+) -> Tuple[float, Dict[str, Any]]:
+    """Perform one SAM optimization step.
+    
+    SAM (Sharpness-Aware Minimization) requires two forward-backward passes:
+    1. First pass: compute gradient and perturb parameters
+    2. Second pass: compute gradient at perturbed location and update
+    
+    Args:
+        model: The neural network model to train.
+        loss_fn: Loss function module.
+        batch: Training batch data.
+        optimizer: SAM optimizer instance.
+        ema: Optional exponential moving average for model parameters.
+        output_args: Dict specifying which outputs to compute (forces, virials, stress).
+        max_grad_norm: Maximum gradient norm for clipping (None to disable).
+        device: Device to run computations on.
+        distributed: Whether using distributed training.
+        
+    Returns:
+        Tuple of (loss, metrics_dict) where metrics_dict contains loss and time.
+    """
+    start_time = time.time()
+    batch = batch.to(device)
+    batch_dict = batch.to_dict()
+    
+    # Context manager for distributed training: no_sync on first backward
+    sync_context = model.no_sync() if distributed and hasattr(model, "no_sync") else nullcontext()
+    
+    # First forward-backward pass
+    enable_running_stats(model)
+    with sync_context:
+        optimizer.zero_grad(set_to_none=True)
+        output = model(
+            batch_dict,
+            training=True,
+            compute_force=output_args["forces"],
+            compute_virials=output_args["virials"],
+            compute_stress=output_args["stress"],
+        )
+        loss = loss_fn(pred=output, ref=batch)
+        loss.backward()
+        
+        if max_grad_norm is not None:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
+        
+        optimizer.first_step(zero_grad=True)
+    
+    # Second forward-backward pass
+    disable_running_stats(model)
+    optimizer.zero_grad(set_to_none=True)
+    output = model(
+        batch_dict,
+        training=True,
+        compute_force=output_args["forces"],
+        compute_virials=output_args["virials"],
+        compute_stress=output_args["stress"],
+    )
+    loss = loss_fn(pred=output, ref=batch)
+    loss.backward()
+    
+    if max_grad_norm is not None:
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
+    
+    optimizer.second_step(zero_grad=True)
+    
+    # Restore BatchNorm statistics tracking
+    enable_running_stats(model)
+    
+    if ema is not None:
+        ema.update()
+    
+    loss_dict = {
+        "loss": to_numpy(loss),
+        "time": time.time() - start_time,
+    }
+    
     return loss, loss_dict
 
 
@@ -752,6 +892,39 @@ class MACELoss(Metric):
             aux["rmse_virials"] = compute_rmse(delta_virials)
             aux["rmse_virials_per_atom"] = compute_rmse(delta_virials_per_atom)
             aux["q95_virials"] = compute_q95(delta_virials)
+        if self.Mus_computed:
+            mus = self.convert(self.mus)
+            delta_mus = self.convert(self.delta_mus)
+            delta_mus_per_atom = self.convert(self.delta_mus_per_atom)
+            aux["mae_mu"] = compute_mae(delta_mus)
+            aux["mae_mu_per_atom"] = compute_mae(delta_mus_per_atom)
+            aux["rel_mae_mu"] = compute_rel_mae(delta_mus, mus)
+            aux["rmse_mu"] = compute_rmse(delta_mus)
+            aux["rmse_mu_per_atom"] = compute_rmse(delta_mus_per_atom)
+            aux["rel_rmse_mu"] = compute_rel_rmse(delta_mus, mus)
+            aux["q95_mu"] = compute_q95(delta_mus)
+        if self.polarizability_computed:
+            delta_polarizability = self.convert(self.delta_polarizability)
+            delta_polarizability_per_atom = self.convert(
+                self.delta_polarizability_per_atom
+            )
+            aux["mae_polarizability"] = compute_mae(delta_polarizability)
+            aux["mae_polarizability_per_atom"] = compute_mae(
+                delta_polarizability_per_atom
+            )
+            aux["rmse_polarizability"] = compute_rmse(delta_polarizability)
+            aux["rmse_polarizability_per_atom"] = compute_rmse(
+                delta_polarizability_per_atom
+            )
+            aux["q95_polarizability"] = compute_q95(delta_polarizability)
+        # Atomic energies
+        if self.atomic_energies_computed:
+            eis = self.convert(self.eis)
+            delta_eis = self.convert(self.delta_eis)
+            aux["mae_ei"] = compute_mae(delta_eis)
+            aux["rmse_ei"] = compute_rmse(delta_eis)
+
+        return aux["loss"], aux
         if self.Mus_computed:
             mus = self.convert(self.mus)
             delta_mus = self.convert(self.delta_mus)

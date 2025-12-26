@@ -21,6 +21,7 @@ from torch.optim.swa_utils import SWALR, AveragedModel
 
 from mace import data, modules, tools
 from mace.data import KeySpecification
+from mace.tools.sam import SAM
 from mace.tools.train import SWAContainer
 
 
@@ -907,6 +908,33 @@ def get_optimizer(
             ) from exc
         _param_options = {k: v for k, v in param_options.items() if k != "amsgrad"}
         optimizer = adamw_schedulefree.AdamWScheduleFree(**_param_options)
+    elif args.optimizer == "sam":
+        # SAM requires a base optimizer
+        base_optimizer_class = None
+        if args.sam_base_optimizer == "adamw":
+            base_optimizer_class = torch.optim.AdamW
+        elif args.sam_base_optimizer == "sgd":
+            # For SGD, we need to handle different parameters
+            # Remove beta parameter as SGD uses momentum instead
+            sgd_params = {k: v for k, v in param_options.items() if k not in ["amsgrad", "betas"]}
+            if "betas" in param_options:
+                # Use first beta value as momentum for SGD
+                sgd_params["momentum"] = param_options["betas"][0]
+            base_optimizer_class = torch.optim.SGD
+            param_options = sgd_params
+        else:  # Default to Adam
+            base_optimizer_class = torch.optim.Adam
+        
+        # Create SAM optimizer with the base optimizer
+        optimizer = SAM(
+            param_options["params"],
+            base_optimizer_class,
+            rho=args.sam_rho,
+            adaptive=args.sam_adaptive,
+            lr=param_options["lr"],
+            weight_decay=param_options.get("weight_decay", 0),
+            **{k: v for k, v in param_options.items() if k not in ["params", "lr", "weight_decay"]}
+        )
     else:
         optimizer = torch.optim.Adam(**param_options)
     return optimizer

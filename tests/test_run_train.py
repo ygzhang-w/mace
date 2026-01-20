@@ -1954,6 +1954,103 @@ def test_run_train_omol_foundation(tmp_path, fitting_configs):
     print("Es", Es)
 
 
+def test_run_train_sam_optimizer(tmp_path, fitting_configs):
+    """Test training with SAM optimizer."""
+    ase.io.write(tmp_path / "fit.xyz", fitting_configs)
+
+    mace_params = _mace_params.copy()
+    mace_params["checkpoints_dir"] = str(tmp_path)
+    mace_params["model_dir"] = str(tmp_path)
+    mace_params["train_file"] = tmp_path / "fit.xyz"
+    mace_params["optimizer"] = "sam"
+    mace_params["sam_rho"] = 0.05
+    mace_params["sam_adaptive"] = None  # False, using None for no flag
+    mace_params["sam_base_optimizer"] = "adam"
+    mace_params["max_num_epochs"] = 5  # Reduced epochs for faster testing
+    mace_params["loss"] = "weighted"
+
+    run_env = os.environ.copy()
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    run_env["PYTHONPATH"] = ":".join(sys.path)
+
+    cmd = (
+        sys.executable
+        + " "
+        + str(run_train)
+        + " "
+        + " ".join(
+            [
+                (f"--{k}={v}" if v is not None else f"--{k}")
+                for k, v in mace_params.items()
+            ]
+        )
+    )
+
+    p = subprocess.run(cmd.split(), env=run_env, check=True)
+    assert p.returncode == 0
+
+    # Verify model was created and can be loaded
+    calc = MACECalculator(model_paths=tmp_path / "MACE.model", device="cpu")
+
+    # Test predictions
+    Es = []
+    for at in fitting_configs:
+        at.calc = calc
+        Es.append(at.get_potential_energy())
+
+    print("SAM optimizer Es", Es)
+    # Just check that we got predictions without errors
+    assert len(Es) == len(fitting_configs)
+
+
+def test_run_train_sam_adaptive(tmp_path, fitting_configs):
+    """Test training with Adaptive SAM (ASAM)."""
+    ase.io.write(tmp_path / "fit.xyz", fitting_configs)
+
+    mace_params = _mace_params.copy()
+    mace_params["checkpoints_dir"] = str(tmp_path)
+    mace_params["model_dir"] = str(tmp_path)
+    mace_params["train_file"] = tmp_path / "fit.xyz"
+    mace_params["optimizer"] = "sam"
+    mace_params["sam_rho"] = 2.0  # Larger rho for adaptive SAM
+    mace_params["sam_adaptive"] = True
+    mace_params["sam_base_optimizer"] = "adamw"
+    mace_params["max_num_epochs"] = 5
+    mace_params["loss"] = "weighted"
+
+    run_env = os.environ.copy()
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    run_env["PYTHONPATH"] = ":".join(sys.path)
+
+    cmd = (
+        sys.executable
+        + " "
+        + str(run_train)
+        + " "
+        + " ".join(
+            [
+                (f"--{k}={v}" if v is not None else f"--{k}")
+                for k, v in mace_params.items()
+            ]
+        )
+    )
+
+    p = subprocess.run(cmd.split(), env=run_env, check=True)
+    assert p.returncode == 0
+
+    # Verify model was created
+    calc = MACECalculator(model_paths=tmp_path / "MACE.model", device="cpu")
+
+    # Test predictions
+    Es = []
+    for at in fitting_configs:
+        at.calc = calc
+        Es.append(at.get_potential_energy())
+
+    print("ASAM optimizer Es", Es)
+    assert len(Es) == len(fitting_configs)
+
+
 def test_run_train_mh_foundation(tmp_path, fitting_configs):
     ase.io.write(tmp_path / "fit.xyz", fitting_configs)
 

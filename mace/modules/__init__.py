@@ -45,7 +45,7 @@ from .models import (
     EnergyDipolesMACE,
     ScaleShiftMACE,
 )
-from .radial import BesselBasis, GaussianBasis, PolynomialCutoff, ZBLBasis
+from .radial import BesselBasis, ExclusiveZBLBasis, GaussianBasis, PolynomialCutoff, ZBLBasis
 from .symmetric_contraction import SymmetricContraction
 from .utils import (
     compute_avg_num_neighbors,
@@ -92,6 +92,7 @@ __all__ = [
     "AtomicEnergiesBlock",
     "RadialEmbeddingBlock",
     "ZBLBasis",
+    "ExclusiveZBLBasis",
     "LinearNodeEmbeddingBlock",
     "LinearReadoutBlock",
     "EquivariantProductBasisBlock",

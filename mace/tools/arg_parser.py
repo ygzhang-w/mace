@@ -176,6 +176,14 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=False,
     )
     parser.add_argument(
+        "--pair_repulsion_type",
+        help="Type of pair repulsion: 'additional' adds ZBL to MACE output, "
+        "'exclusive' masks short-range neighbors from MACE (ZBL only within r_max)",
+        type=str,
+        default="additional",
+        choices=["additional", "exclusive"],
+    )
+    parser.add_argument(
         "--distance_transform",
         help="use distance transform for radial basis functions",
         default="None",

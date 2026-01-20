@@ -981,6 +981,16 @@ def run(args) -> None:
                 model_path = Path(args.checkpoints_dir) / (tag + ".model")
             logging.info(f"Saving model to {model_path}")
             model_to_save = deepcopy(model)
+            
+            # Align ZBL energy offsets for exclusive mode
+            if (
+                args.pair_repulsion
+                and getattr(args, "pair_repulsion_type", "additional") == "exclusive"
+            ):
+                from mace.tools.align_zbl import align_exclusive_zbl
+                logging.info("Aligning ZBL energy offsets for energy continuity...")
+                model_to_save = align_exclusive_zbl(model_to_save, z_table)
+            
             if args.enable_cueq and not args.only_cueq:
                 logging.info("RUNING CUEQ TO E3NN")
                 model_to_save = run_cueq_to_e3nn(deepcopy(model), device=device)

@@ -753,7 +753,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         help="Optimizer for parameter optimization",
         type=str,
         default="adam",
-        choices=["adam", "adamw", "schedulefree"],
+        choices=["adam", "adamw", "schedulefree", "sam"],
     )
     parser.add_argument(
         "--beta",
@@ -784,6 +784,25 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         help="use amsgrad variant of optimizer",
         action="store_true",
         default=True,
+    )
+    parser.add_argument(
+        "--sam_rho",
+        help="Neighborhood size for SAM optimizer (rho parameter)",
+        type=float,
+        default=0.05,
+    )
+    parser.add_argument(
+        "--sam_adaptive",
+        help="Use Adaptive SAM (ASAM) which is scale-invariant",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "--sam_base_optimizer",
+        help="Base optimizer to use with SAM",
+        type=str,
+        default="adam",
+        choices=["adam", "adamw", "sgd"],
     )
     parser.add_argument(
         "--scheduler", help="Type of scheduler", type=str, default="ReduceLROnPlateau"

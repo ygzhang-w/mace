@@ -188,6 +188,22 @@ def configure_model(
         )
         model_config_foundation = None
 
+    # Compute pair r_max for exclusive ZBL mode
+    if (
+        args.pair_repulsion
+        and getattr(args, "pair_repulsion_type", "additional") == "exclusive"
+    ):
+        from mace.tools.zbl_utils import (
+            compute_element_pair_min_distances,
+            pair_r_max_to_tensors,
+        )
+
+        logging.info("Computing ZBL r_max from training data for exclusive mode...")
+        pair_r_max_dict = compute_element_pair_min_distances(train_loader, z_table)
+        args.pair_r_max_matrix = pair_r_max_to_tensors(pair_r_max_dict)
+    else:
+        args.pair_r_max_matrix = None
+
     model = _build_model(args, model_config, model_config_foundation, heads)
 
     if model_foundation is not None:
@@ -230,6 +246,8 @@ def _build_model(
         return modules.ScaleShiftMACE(
             **model_config,
             pair_repulsion=args.pair_repulsion,
+            pair_repulsion_type=getattr(args, 'pair_repulsion_type', 'additional'),
+            pair_r_max_matrix=getattr(args, 'pair_r_max_matrix', None),
             distance_transform=args.distance_transform,
             correlation=args.correlation,
             gate=modules.gate_dict[args.gate],
@@ -249,6 +267,8 @@ def _build_model(
         return modules.ScaleShiftMACE(
             **model_config,
             pair_repulsion=args.pair_repulsion,
+            pair_repulsion_type=getattr(args, 'pair_repulsion_type', 'additional'),
+            pair_r_max_matrix=getattr(args, 'pair_r_max_matrix', None),
             distance_transform=args.distance_transform,
             correlation=args.correlation,
             gate=modules.gate_dict[args.gate],

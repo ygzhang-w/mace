@@ -184,6 +184,21 @@ class ZBLBasis(torch.nn.Module):
             self.register_buffer("a_exp", torch.tensor(0.300))
             self.register_buffer("a_prefactor", torch.tensor(0.4543))
 
+    def get_edge_mask(
+        self,
+        x: torch.Tensor,
+        node_attrs: torch.Tensor,
+        edge_index: torch.Tensor,
+        atomic_numbers: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return boolean mask: all True for additional mode (MACE processes all edges).
+
+        In additional mode, ZBL is added on top of MACE, so MACE should process
+        all edges. This method returns all True for JIT compatibility with
+        ExclusiveZBLBasis.
+        """
+        return torch.ones(edge_index.shape[1], dtype=torch.bool, device=x.device)
+
     def forward(
         self,
         x: torch.Tensor,
@@ -219,6 +234,163 @@ class ZBLBasis(torch.nn.Module):
 
     def __repr__(self):
         return f"{self.__class__.__name__}(c={self.c})"
+
+
+@compile_mode("script")
+class ExclusiveZBLBasis(torch.nn.Module):
+    """ZBL potential with per-element-pair r_max from training data.
+
+    In exclusive mode, MACE only processes neighbors outside ZBL r_max,
+    while ZBL handles all short-range interactions within r_max.
+
+    All data stored as register_buffer for automatic checkpoint saving.
+    """
+
+    p: torch.Tensor
+
+    def __init__(
+        self,
+        pair_r_max_matrix: torch.Tensor,
+        p: int = 6,
+        trainable: bool = False,
+    ):
+        """
+        Args:
+            pair_r_max_matrix: Tensor of shape (max_z, max_z) containing r_max
+                               for each element pair. Use pair_r_max_to_tensors()
+                               to convert from dict format.
+            p: Polynomial cutoff order
+            trainable: Whether ZBL parameters are trainable
+        """
+        super().__init__()
+
+        # ZBL coefficients
+        self.register_buffer(
+            "c",
+            torch.tensor(
+                [0.1818, 0.5099, 0.2802, 0.02817], dtype=torch.get_default_dtype()
+            ),
+        )
+        self.register_buffer("p", torch.tensor(p, dtype=torch.int))
+
+        # Per-pair r_max values
+        self.register_buffer("pair_r_max_matrix", pair_r_max_matrix)
+
+        # Energy offsets for alignment (set after training)
+        num_pairs = pair_r_max_matrix.shape[0]
+        self.register_buffer(
+            "energy_offset_matrix",
+            torch.zeros((num_pairs, num_pairs), dtype=torch.get_default_dtype()),
+        )
+
+        # ZBL screening parameters
+        if trainable:
+            self.a_exp = torch.nn.Parameter(torch.tensor(0.300, requires_grad=True))
+            self.a_prefactor = torch.nn.Parameter(
+                torch.tensor(0.4543, requires_grad=True)
+            )
+        else:
+            self.register_buffer("a_exp", torch.tensor(0.300))
+            self.register_buffer("a_prefactor", torch.tensor(0.4543))
+
+    def get_pair_r_max(
+        self,
+        node_attrs: torch.Tensor,
+        edge_index: torch.Tensor,
+        atomic_numbers: torch.Tensor,
+    ) -> torch.Tensor:
+        """Get r_max for each edge based on element pair."""
+        sender = edge_index[0]
+        receiver = edge_index[1]
+        node_atomic_numbers = atomic_numbers[torch.argmax(node_attrs, dim=1)]
+        Z_u = node_atomic_numbers[sender].to(torch.int64)
+        Z_v = node_atomic_numbers[receiver].to(torch.int64)
+        return self.pair_r_max_matrix[Z_u, Z_v].unsqueeze(-1)
+
+    def get_edge_mask(
+        self,
+        x: torch.Tensor,
+        node_attrs: torch.Tensor,
+        edge_index: torch.Tensor,
+        atomic_numbers: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return boolean mask: True for edges OUTSIDE ZBL r_max (for MACE).
+
+        Args:
+            x: Edge lengths [n_edges, 1]
+            node_attrs: Node attributes (one-hot)
+            edge_index: Edge index tensor
+            atomic_numbers: Atomic numbers tensor
+
+        Returns:
+            Boolean mask where True indicates edge should be processed by MACE
+        """
+        r_max = self.get_pair_r_max(node_attrs, edge_index, atomic_numbers)
+        return (x >= r_max).squeeze(-1)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        node_attrs: torch.Tensor,
+        edge_index: torch.Tensor,
+        atomic_numbers: torch.Tensor,
+    ) -> torch.Tensor:
+        """Compute ZBL energy for edges within r_max.
+
+        Args:
+            x: Edge lengths [n_edges, 1]
+            node_attrs: Node attributes (one-hot)
+            edge_index: Edge index tensor
+            atomic_numbers: Atomic numbers tensor
+
+        Returns:
+            Per-node ZBL energy contribution
+        """
+        sender = edge_index[0]
+        receiver = edge_index[1]
+        node_atomic_numbers = atomic_numbers[torch.argmax(node_attrs, dim=1)].unsqueeze(
+            -1
+        )
+        Z_u = node_atomic_numbers[sender].to(torch.int64)
+        Z_v = node_atomic_numbers[receiver].to(torch.int64)
+
+        # ZBL screening length
+        a = (
+            self.a_prefactor
+            * 0.529
+            / (torch.pow(Z_u, self.a_exp) + torch.pow(Z_v, self.a_exp))
+        )
+        r_over_a = x / a
+
+        # ZBL screening function
+        phi = (
+            self.c[0] * torch.exp(-3.2 * r_over_a)
+            + self.c[1] * torch.exp(-0.9423 * r_over_a)
+            + self.c[2] * torch.exp(-0.4028 * r_over_a)
+            + self.c[3] * torch.exp(-0.2016 * r_over_a)
+        )
+
+        # ZBL pair energy
+        v_edges = (14.3996 * Z_u * Z_v) / x * phi
+
+        # Per-pair r_max and cutoff envelope
+        r_max = self.pair_r_max_matrix[Z_u.squeeze(-1), Z_v.squeeze(-1)].unsqueeze(-1)
+        envelope = PolynomialCutoff.calculate_envelope(x, r_max, self.p)
+
+        # Apply envelope and energy offset
+        # Use (1 - envelope) for offset to ensure continuity at r_max:
+        # At r=0: envelope=1, E = raw_zbl * 1 + offset * 0 = raw_zbl
+        # At r=r_max: envelope=0, E = raw_zbl * 0 + offset * 1 = offset = E_mace(r_max)
+        energy_offset = self.energy_offset_matrix[
+            Z_u.squeeze(-1), Z_v.squeeze(-1)
+        ].unsqueeze(-1)
+        v_edges = 0.5 * (v_edges * envelope + energy_offset * (1 - envelope))
+
+        V_ZBL = scatter_sum(v_edges, receiver, dim=0, dim_size=node_attrs.size(0))
+        return V_ZBL.squeeze(-1)
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(p={self.p})"
 
 
 @compile_mode("script")

@@ -12,7 +12,7 @@ from e3nn import o3
 from e3nn.util.jit import compile_mode
 
 from mace.modules.embeddings import GenericJointEmbedding
-from mace.modules.radial import ZBLBasis
+from mace.modules.radial import ExclusiveZBLBasis, ZBLBasis
 from mace.tools.scatter import scatter_mean, scatter_sum
 from mace.tools.torch_tools import get_change_of_basis, spherical_to_cartesian
 
@@ -62,6 +62,8 @@ class MACE(torch.nn.Module):
         correlation: Union[int, List[int]],
         gate: Optional[Callable],
         pair_repulsion: bool = False,
+        pair_repulsion_type: str = "additional",
+        pair_r_max_matrix: Optional[torch.Tensor] = None,
         apply_cutoff: bool = True,
         use_reduced_cg: bool = True,
         use_so3: bool = False,
@@ -137,8 +139,21 @@ class MACE(torch.nn.Module):
             apply_cutoff=apply_cutoff,
         )
         edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
+        # Initialize pair_repulsion attributes for JIT compatibility
+        # pair_repulsion_type: "none" | "additional" | "exclusive"
+        self.pair_repulsion_type: str = "none"
+        self.pair_repulsion: bool = False
+        # Always create pair_repulsion_fn for JIT compatibility (uses ZBLBasis as default)
+        self.pair_repulsion_fn = ZBLBasis(p=num_polynomial_cutoff)
         if pair_repulsion:
-            self.pair_repulsion_fn = ZBLBasis(p=num_polynomial_cutoff)
+            if pair_repulsion_type == "exclusive" and pair_r_max_matrix is not None:
+                self.pair_repulsion_fn = ExclusiveZBLBasis(
+                    pair_r_max_matrix=pair_r_max_matrix, p=num_polynomial_cutoff
+                )
+                self.pair_repulsion_type = "exclusive"
+            else:
+                # Already initialized above
+                self.pair_repulsion_type = "additional"
             self.pair_repulsion = True
 
         if not use_so3:
@@ -321,7 +336,7 @@ class MACE(torch.nn.Module):
         edge_feats, cutoff = self.radial_embedding(
             lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
         )
-        if hasattr(self, "pair_repulsion"):
+        if self.pair_repulsion:
             pair_node_energy = self.pair_repulsion_fn(
                 lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
             )
@@ -359,6 +374,22 @@ class MACE(torch.nn.Module):
         node_energies_list = [node_e0, pair_node_energy]
         node_feats_concat: List[torch.Tensor] = []
 
+        # In exclusive ZBL mode, mask edges within ZBL r_max from MACE
+        use_exclusive_zbl = self.pair_repulsion_type == "exclusive"
+        if use_exclusive_zbl:
+            edge_mask = self.pair_repulsion_fn.get_edge_mask(
+                lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
+            )
+            interaction_edge_index = data["edge_index"][:, edge_mask]
+            interaction_edge_attrs = edge_attrs[edge_mask]
+            interaction_edge_feats = edge_feats[edge_mask]
+            interaction_cutoff = cutoff[edge_mask] if cutoff is not None else None
+        else:
+            interaction_edge_index = data["edge_index"]
+            interaction_edge_attrs = edge_attrs
+            interaction_edge_feats = edge_feats
+            interaction_cutoff = cutoff
+
         for i, (interaction, product) in enumerate(
             zip(self.interactions, self.products)
         ):
@@ -368,10 +399,10 @@ class MACE(torch.nn.Module):
             node_feats, sc = interaction(
                 node_attrs=node_attrs_slice,
                 node_feats=node_feats,
-                edge_attrs=edge_attrs,
-                edge_feats=edge_feats,
-                edge_index=data["edge_index"],
-                cutoff=cutoff,
+                edge_attrs=interaction_edge_attrs,
+                edge_feats=interaction_edge_feats,
+                edge_index=interaction_edge_index,
+                cutoff=interaction_cutoff,
                 first_layer=(i == 0),
                 lammps_class=lammps_class,
                 lammps_natoms=lammps_natoms,
@@ -503,7 +534,7 @@ class ScaleShiftMACE(MACE):
             lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
         )
 
-        if hasattr(self, "pair_repulsion"):
+        if self.pair_repulsion:
             pair_node_energy = self.pair_repulsion_fn(
                 lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
             )
@@ -539,6 +570,22 @@ class ScaleShiftMACE(MACE):
         node_es_list = [pair_node_energy]
         node_feats_list: List[torch.Tensor] = []
 
+        # In exclusive ZBL mode, mask edges within ZBL r_max from MACE
+        use_exclusive_zbl = self.pair_repulsion_type == "exclusive"
+        if use_exclusive_zbl:
+            edge_mask = self.pair_repulsion_fn.get_edge_mask(
+                lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
+            )
+            interaction_edge_index = data["edge_index"][:, edge_mask]
+            interaction_edge_attrs = edge_attrs[edge_mask]
+            interaction_edge_feats = edge_feats[edge_mask]
+            interaction_cutoff = cutoff[edge_mask] if cutoff is not None else None
+        else:
+            interaction_edge_index = data["edge_index"]
+            interaction_edge_attrs = edge_attrs
+            interaction_edge_feats = edge_feats
+            interaction_cutoff = cutoff
+
         for i, (interaction, product) in enumerate(
             zip(self.interactions, self.products)
         ):
@@ -548,10 +595,10 @@ class ScaleShiftMACE(MACE):
             node_feats, sc = interaction(
                 node_attrs=node_attrs_slice,
                 node_feats=node_feats,
-                edge_attrs=edge_attrs,
-                edge_feats=edge_feats,
-                edge_index=data["edge_index"],
-                cutoff=cutoff,
+                edge_attrs=interaction_edge_attrs,
+                edge_feats=interaction_edge_feats,
+                edge_index=interaction_edge_index,
+                cutoff=interaction_cutoff,
                 first_layer=(i == 0),
                 lammps_class=lammps_class,
                 lammps_natoms=lammps_natoms,

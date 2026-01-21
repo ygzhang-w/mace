@@ -184,6 +184,13 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         choices=["additional", "exclusive"],
     )
     parser.add_argument(
+        "--pair_repulsion_epsilon",
+        help="Small value (in Å) subtracted from min distance when computing ZBL r_max "
+        "in exclusive mode. Avoids floating-point precision issues at boundary.",
+        type=float,
+        default=0.1,
+    )
+    parser.add_argument(
         "--distance_transform",
         help="use distance transform for radial basis functions",
         default="None",

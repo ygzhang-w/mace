@@ -199,7 +199,8 @@ def configure_model(
         )
 
         logging.info("Computing ZBL r_max from training data for exclusive mode...")
-        pair_r_max_dict = compute_element_pair_min_distances(train_loader, z_table)
+        epsilon = getattr(args, "pair_repulsion_epsilon", 0.1)
+        pair_r_max_dict = compute_element_pair_min_distances(train_loader, z_table, epsilon=epsilon)
         args.pair_r_max_matrix = pair_r_max_to_tensors(pair_r_max_dict)
     else:
         args.pair_r_max_matrix = None

@@ -176,6 +176,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=False,
     )
     parser.add_argument(
+        "--pair_repulsion_epsilon",
+        help="epsilon value added to the minimum pair distance from training set to compute r_max for ZBL potential. If None, uses covalent radii sum as r_max.",
+        type=float,
+        default=None,
+    )
+    parser.add_argument(
         "--distance_transform",
         help="use distance transform for radial basis functions",
         default="None",

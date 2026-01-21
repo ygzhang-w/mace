@@ -7,7 +7,11 @@ from e3nn import o3
 from mace import modules
 from mace.modules.wrapper_ops import CuEquivarianceConfig
 from mace.tools.finetuning_utils import load_foundations_elements
-from mace.tools.scripts_utils import extract_config_mace_model
+from mace.tools.scripts_utils import (
+    compute_min_pair_distances,
+    create_pair_r_max_tensor,
+    extract_config_mace_model,
+)
 from mace.tools.utils import AtomicNumberTable
 
 
@@ -188,7 +192,19 @@ def configure_model(
         )
         model_config_foundation = None
 
-    model = _build_model(args, model_config, model_config_foundation, heads)
+    # Compute pair_r_max if pair_repulsion_epsilon is set
+    pair_r_max = None
+    if args.pair_repulsion and args.pair_repulsion_epsilon is not None:
+        logging.info(
+            f"Computing minimum pair distances from training data with epsilon={args.pair_repulsion_epsilon}"
+        )
+        min_pair_distances = compute_min_pair_distances(
+            train_loader, z_table, epsilon=args.pair_repulsion_epsilon
+        )
+        pair_r_max = create_pair_r_max_tensor(min_pair_distances)
+        logging.info("Using computed pair distances for ZBL r_max")
+
+    model = _build_model(args, model_config, model_config_foundation, heads, pair_r_max)
 
     if model_foundation is not None:
         model = load_foundations_elements(
@@ -219,7 +235,7 @@ def _determine_atomic_inter_shift(mean, heads):
 
 
 def _build_model(
-    args, model_config, model_config_foundation, heads
+    args, model_config, model_config_foundation, heads, pair_r_max=None
 ):  # pylint: disable=too-many-return-statements
     if args.model == "MACE":
         if args.interaction_first not in [
@@ -244,6 +260,7 @@ def _build_model(
             use_embedding_readout=args.use_embedding_readout,
             use_last_readout_only=args.use_last_readout_only,
             use_agnostic_product=args.use_agnostic_product,
+            pair_r_max=pair_r_max,
         )
     if args.model == "ScaleShiftMACE":
         return modules.ScaleShiftMACE(
@@ -263,6 +280,7 @@ def _build_model(
             use_embedding_readout=args.use_embedding_readout,
             use_last_readout_only=args.use_last_readout_only,
             use_agnostic_product=args.use_agnostic_product,
+            pair_r_max=pair_r_max,
         )
     if args.model == "FoundationMACE":
         return modules.ScaleShiftMACE(**model_config_foundation)
@@ -351,5 +369,6 @@ def _build_model(
             use_embedding_readout=args.use_embedding_readout,
             use_last_readout_only=args.use_last_readout_only,
             use_agnostic_product=args.use_agnostic_product,
+            pair_r_max=pair_r_max,
         )
     raise RuntimeError(f"Unknown model: '{args.model}'")

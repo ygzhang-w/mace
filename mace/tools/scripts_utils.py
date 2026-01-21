@@ -32,6 +32,89 @@ class SubsetCollection:
     tests: List[Tuple[str, data.Configurations]]
 
 
+def compute_min_pair_distances(
+    train_loader: torch.utils.data.DataLoader,
+    z_table: "tools.AtomicNumberTable",
+    epsilon: float = 0.0,
+) -> Dict[Tuple[int, int], float]:
+    """
+    Compute the minimum distance for each atomic pair in the training set.
+
+    Args:
+        train_loader: DataLoader containing training data with edge_index, positions, shifts, and node_attrs
+        z_table: Atomic number table for mapping indices to atomic numbers
+        epsilon: Value to add to the minimum distance
+
+    Returns:
+        Dictionary mapping (Z_u, Z_v) pairs to min_distance + epsilon
+    """
+    min_distances: Dict[Tuple[int, int], float] = {}
+
+    for batch in train_loader:
+        # Get positions and compute edge vectors/lengths
+        positions = batch.positions
+        edge_index = batch.edge_index
+        shifts = batch.shifts
+        node_attrs = batch.node_attrs
+
+        # Compute edge vectors and lengths
+        sender = edge_index[0]
+        receiver = edge_index[1]
+        vectors = positions[receiver] - positions[sender] + shifts
+        lengths = torch.norm(vectors, dim=-1)
+
+        # Get atomic numbers from node_attrs (one-hot encoded)
+        atomic_indices = torch.argmax(node_attrs, dim=1)
+        atomic_numbers = torch.tensor([z_table.zs[idx] for idx in atomic_indices])
+
+        # For each edge, get the atomic pair and update minimum distance
+        for i in range(len(sender)):
+            z_u = int(atomic_numbers[sender[i]].item())
+            z_v = int(atomic_numbers[receiver[i]].item())
+            # Normalize pair order to avoid duplicates (Z_u <= Z_v)
+            pair = (min(z_u, z_v), max(z_u, z_v))
+            dist = float(lengths[i].item())
+
+            if pair not in min_distances or dist < min_distances[pair]:
+                min_distances[pair] = dist
+
+    # Add epsilon to all minimum distances
+    for pair in min_distances:
+        min_distances[pair] += epsilon
+
+    logging.info(f"Computed minimum pair distances for {len(min_distances)} atomic pairs")
+    for pair, dist in sorted(min_distances.items()):
+        logging.debug(f"  Pair {pair}: r_max = {dist:.4f} Å")
+
+    return min_distances
+
+
+def create_pair_r_max_tensor(
+    min_pair_distances: Dict[Tuple[int, int], float],
+    max_z: int = 119,
+) -> torch.Tensor:
+    """
+    Create a 2D tensor for pair r_max values indexed by atomic numbers.
+
+    Args:
+        min_pair_distances: Dictionary from compute_min_pair_distances
+        max_z: Maximum atomic number to support (default 119 to match ASE covalent_radii)
+
+    Returns:
+        Tensor of shape (max_z, max_z) where pair_r_max[Z_u, Z_v] = r_max for pair (Z_u, Z_v)
+        Values default to -1.0 for pairs not found in training data
+    """
+    # Initialize with -1.0 to indicate "use covalent radii fallback"
+    pair_r_max = torch.full((max_z, max_z), -1.0, dtype=torch.get_default_dtype())
+
+    for (z_u, z_v), r_max in min_pair_distances.items():
+        if z_u < max_z and z_v < max_z:
+            pair_r_max[z_u, z_v] = r_max
+            pair_r_max[z_v, z_u] = r_max  # Symmetric
+
+    return pair_r_max
+
+
 def log_dataset_contents(dataset: data.Configurations, dataset_name: str) -> None:
     log_string = f"{dataset_name} ["
     for prop_name in dataset[0].properties.keys():

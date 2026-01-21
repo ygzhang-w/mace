@@ -79,6 +79,7 @@ class MACE(torch.nn.Module):
         oeq_config: Optional[Dict[str, Any]] = None,
         lammps_mliap: Optional[bool] = False,
         readout_cls: Optional[Type[NonLinearReadoutBlock]] = NonLinearReadoutBlock,
+        pair_r_max: Optional[torch.Tensor] = None,
     ):
         super().__init__()
         self.register_buffer(
@@ -138,7 +139,7 @@ class MACE(torch.nn.Module):
         )
         edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
         if pair_repulsion:
-            self.pair_repulsion_fn = ZBLBasis(p=num_polynomial_cutoff)
+            self.pair_repulsion_fn = ZBLBasis(p=num_polynomial_cutoff, pair_r_max=pair_r_max)
             self.pair_repulsion = True
 
         if not use_so3:

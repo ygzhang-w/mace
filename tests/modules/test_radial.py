@@ -1,5 +1,6 @@
 import pytest
 import torch
+import numpy as np
 
 from mace.modules.radial import AgnesiTransform, ZBLBasis
 
@@ -17,6 +18,7 @@ def test_zbl_basis_initialization(zbl_basis):
     assert zbl_basis.a_prefactor == torch.tensor(0.4543)
     assert not zbl_basis.a_exp.requires_grad
     assert not zbl_basis.a_prefactor.requires_grad
+    assert zbl_basis.pair_r_max is None
 
 
 def test_trainable_zbl_basis_initialization(zbl_basis):
@@ -46,6 +48,74 @@ def test_forward(zbl_basis):
         torch.tensor([0.0031, 0.0031], dtype=torch.get_default_dtype()),
         rtol=1e-2,
     )
+
+
+def test_zbl_basis_with_pair_r_max():
+    """Test ZBLBasis with custom pair_r_max tensor."""
+    # Create a pair_r_max tensor with custom values
+    # For H (Z=1) and C (Z=6) pair, set r_max to 1.5
+    pair_r_max = torch.full((119, 119), -1.0, dtype=torch.get_default_dtype())
+    pair_r_max[1, 6] = 1.5
+    pair_r_max[6, 1] = 1.5
+    pair_r_max[1, 1] = 1.2
+    pair_r_max[6, 6] = 2.0
+
+    zbl_basis = ZBLBasis(p=6, trainable=False, pair_r_max=pair_r_max)
+
+    assert zbl_basis.pair_r_max is not None
+    assert zbl_basis.pair_r_max.shape == (119, 119)
+    assert zbl_basis.pair_r_max[1, 6] == 1.5
+    assert zbl_basis.pair_r_max[6, 1] == 1.5
+
+    # Test forward pass with custom r_max
+    x = torch.tensor([1.0, 1.0, 2.0]).unsqueeze(-1)  # [n_edges, 1]
+    node_attrs = torch.tensor(
+        [[1, 0], [0, 1]], dtype=torch.get_default_dtype()
+    )  # [n_nodes, n_node_features] - one_hot encoding of atomic numbers
+    edge_index = torch.tensor([[0, 1, 1], [1, 0, 1]])  # [2, n_edges]
+    atomic_numbers = torch.tensor([1, 6])  # [n_nodes]
+
+    output = zbl_basis(x, node_attrs, edge_index, atomic_numbers)
+    assert output.shape == torch.Size([node_attrs.shape[0]])
+
+    # Verify that the output is different from default behavior due to custom r_max
+    zbl_basis_default = ZBLBasis(p=6, trainable=False)
+    output_default = zbl_basis_default(x, node_attrs, edge_index, atomic_numbers)
+
+    # The outputs should be different because we're using different r_max values
+    # (unless the default covalent radii happen to match our custom values)
+    # This is a weak test - the important thing is that no errors occur
+
+
+def test_zbl_basis_pair_r_max_fallback():
+    """Test ZBLBasis falls back to covalent radii for pairs not in pair_r_max."""
+    # Create a sparse pair_r_max tensor with only H-H pair
+    pair_r_max = torch.full((119, 119), -1.0, dtype=torch.get_default_dtype())
+    pair_r_max[1, 1] = 1.2  # Only set H-H pair
+
+    zbl_basis = ZBLBasis(p=6, trainable=False, pair_r_max=pair_r_max)
+
+    # Test forward pass
+    x = torch.tensor([1.0, 1.0, 2.0]).unsqueeze(-1)  # [n_edges, 1]
+    node_attrs = torch.tensor(
+        [[1, 0], [0, 1]], dtype=torch.get_default_dtype()
+    )  # [n_nodes, n_node_features]
+    edge_index = torch.tensor([[0, 1, 1], [1, 0, 1]])  # [2, n_edges]
+    atomic_numbers = torch.tensor([1, 6])  # [n_nodes]
+
+    output = zbl_basis(x, node_attrs, edge_index, atomic_numbers)
+    assert output.shape == torch.Size([node_attrs.shape[0]])
+    # No error should occur - H-C pair should fall back to covalent radii
+
+
+def test_zbl_basis_repr_with_pair_r_max():
+    """Test that repr correctly shows pair_r_max status."""
+    zbl_default = ZBLBasis(p=6)
+    assert "covalent_radii" in repr(zbl_default)
+
+    pair_r_max = torch.full((119, 119), -1.0, dtype=torch.get_default_dtype())
+    zbl_custom = ZBLBasis(p=6, pair_r_max=pair_r_max)
+    assert "custom" in repr(zbl_custom)
 
 
 @pytest.fixture

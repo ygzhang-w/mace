@@ -666,7 +666,11 @@ def get_loss_fn(
     dipole_only: bool,
     compute_dipole: bool,
 ) -> torch.nn.Module:
-    if args.loss == "weighted":
+    if args.loss == "ef":
+        loss_fn = modules.EnergyForcesLoss(
+            energy_weight=args.energy_weight, forces_weight=args.forces_weight
+        )
+    elif args.loss == "weighted":
         loss_fn = modules.WeightedEnergyForcesLoss(
             energy_weight=args.energy_weight, forces_weight=args.forces_weight
         )

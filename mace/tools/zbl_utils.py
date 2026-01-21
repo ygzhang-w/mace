@@ -16,6 +16,7 @@ from mace.tools.utils import AtomicNumberTable
 def compute_element_pair_min_distances(
     train_loader: DataLoader,
     z_table: AtomicNumberTable,
+    epsilon: float = 0.1,
 ) -> Dict[Tuple[int, int], float]:
     """
     Scan training data to find minimum interatomic distances per element pair.
@@ -24,12 +25,17 @@ def compute_element_pair_min_distances(
     distance observed for each element pair (Z_i, Z_j). The returned r_max values
     are used as the ZBL cutoff distances in exclusive mode.
 
+    Note: A small epsilon is subtracted from the minimum distance to avoid
+    floating-point precision issues at the boundary. This ensures all training
+    edges satisfy x >= r_max and are processed by MACE (not masked by ZBL).
+
     Args:
         train_loader: DataLoader containing training data
         z_table: AtomicNumberTable with atomic numbers
+        epsilon: Small value subtracted from min distance to avoid precision issues
 
     Returns:
-        Dictionary mapping (Z_i, Z_j) tuples to minimum distances.
+        Dictionary mapping (Z_i, Z_j) tuples to r_max values (min_distance - epsilon).
         Keys are sorted (Z_i <= Z_j) to avoid duplicates.
     """
     min_distances: Dict[Tuple[int, int], float] = defaultdict(lambda: float("inf"))
@@ -67,12 +73,13 @@ def compute_element_pair_min_distances(
             if dist > 0 and dist < min_distances[pair]:
                 min_distances[pair] = dist
 
-    # Convert defaultdict to regular dict
-    result = dict(min_distances)
+    # Convert defaultdict to regular dict and apply epsilon
+    # Subtract epsilon to ensure all edges at min_distance pass the >= r_max check
+    result = {pair: dist - epsilon for pair, dist in min_distances.items()}
 
     # Log the computed values
-    for pair, dist in sorted(result.items()):
-        logging.info(f"  Element pair {pair}: min distance = {dist:.4f} Å")
+    for pair, r_max in sorted(result.items()):
+        logging.info(f"  Element pair {pair}: r_max = {r_max:.6f} Å (min_dist - epsilon)")
 
     return result
 

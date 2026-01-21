@@ -153,11 +153,11 @@ class ZBLBasis(torch.nn.Module):
 
     p: torch.Tensor
 
-    def __init__(self, p=6, trainable=False, **kwargs):
+    def __init__(self, p=6, trainable=False, pair_r_max: torch.Tensor = None, **kwargs):
         super().__init__()
         if "r_max" in kwargs:
             logging.warning(
-                "r_max is deprecated. r_max is determined from the covalent radii."
+                "r_max is deprecated. r_max is determined from the covalent radii or pair_r_max."
             )
 
         # Pre-calculate the p coefficients for the ZBL potential
@@ -175,6 +175,13 @@ class ZBLBasis(torch.nn.Module):
                 dtype=torch.get_default_dtype(),
             ),
         )
+        # pair_r_max: 2D tensor of shape (max_z, max_z) where pair_r_max[Z_u, Z_v] = r_max
+        # Values of -1.0 indicate "use covalent radii fallback"
+        if pair_r_max is not None:
+            self.register_buffer("pair_r_max", pair_r_max)
+        else:
+            self.pair_r_max = None
+
         if trainable:
             self.a_exp = torch.nn.Parameter(torch.tensor(0.300, requires_grad=True))
             self.a_prefactor = torch.nn.Parameter(
@@ -211,14 +218,28 @@ class ZBLBasis(torch.nn.Module):
             + self.c[3] * torch.exp(-0.2016 * r_over_a)
         )
         v_edges = (14.3996 * Z_u * Z_v) / x * phi
-        r_max = self.covalent_radii[Z_u] + self.covalent_radii[Z_v]
+
+        # Compute r_max for each edge
+        if self.pair_r_max is not None:
+            # Use pair_r_max tensor if available
+            # Flatten Z_u and Z_v for indexing
+            Z_u_flat = Z_u.squeeze(-1)
+            Z_v_flat = Z_v.squeeze(-1)
+            r_max = self.pair_r_max[Z_u_flat, Z_v_flat].unsqueeze(-1)
+            # Fallback to covalent radii where pair_r_max is -1.0
+            covalent_r_max = self.covalent_radii[Z_u] + self.covalent_radii[Z_v]
+            r_max = torch.where(r_max < 0, covalent_r_max, r_max)
+        else:
+            # Default: use covalent radii sum
+            r_max = self.covalent_radii[Z_u] + self.covalent_radii[Z_v]
+
         envelope = PolynomialCutoff.calculate_envelope(x, r_max, self.p)
         v_edges = 0.5 * v_edges * envelope
         V_ZBL = scatter_sum(v_edges, receiver, dim=0, dim_size=node_attrs.size(0))
         return V_ZBL.squeeze(-1)
 
     def __repr__(self):
-        return f"{self.__class__.__name__}(c={self.c})"
+        return f"{self.__class__.__name__}(c={self.c}, pair_r_max={'custom' if self.pair_r_max is not None else 'covalent_radii'})"
 
 
 @compile_mode("script")

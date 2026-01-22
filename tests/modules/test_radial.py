@@ -112,10 +112,53 @@ def test_zbl_basis_repr_with_pair_r_max():
     """Test that repr correctly shows pair_r_max status."""
     zbl_default = ZBLBasis(p=6)
     assert "covalent_radii" in repr(zbl_default)
+    assert "zbl_scale=1.0" in repr(zbl_default)
 
     pair_r_max = torch.full((119, 119), -1.0, dtype=torch.get_default_dtype())
     zbl_custom = ZBLBasis(p=6, pair_r_max=pair_r_max)
     assert "custom" in repr(zbl_custom)
+
+
+def test_zbl_basis_zbl_scale():
+    """Test ZBLBasis zbl_scale parameter."""
+    # Test default zbl_scale = 1.0
+    zbl_default = ZBLBasis(p=6, trainable=False)
+    assert zbl_default.zbl_scale.item() == 1.0
+
+    # Test custom zbl_scale
+    zbl_scaled = ZBLBasis(p=6, trainable=False, zbl_scale=2.0)
+    assert zbl_scaled.zbl_scale.item() == 2.0
+
+    # Test forward pass with different scales
+    x = torch.tensor([1.0, 1.0, 2.0]).unsqueeze(-1)  # [n_edges, 1]
+    node_attrs = torch.tensor(
+        [[1, 0], [0, 1]], dtype=torch.get_default_dtype()
+    )  # [n_nodes, n_node_features]
+    edge_index = torch.tensor([[0, 1, 1], [1, 0, 1]])  # [2, n_edges]
+    atomic_numbers = torch.tensor([1, 6])  # [n_nodes]
+
+    output_default = zbl_default(x, node_attrs, edge_index, atomic_numbers)
+    output_scaled = zbl_scaled(x, node_attrs, edge_index, atomic_numbers)
+
+    # Output should scale linearly with zbl_scale
+    assert torch.allclose(output_scaled, output_default * 2.0, rtol=1e-5)
+
+
+def test_zbl_basis_zbl_scale_various_values():
+    """Test ZBLBasis with various zbl_scale values."""
+    x = torch.tensor([1.0, 1.0]).unsqueeze(-1)
+    node_attrs = torch.tensor([[1, 0], [0, 1]], dtype=torch.get_default_dtype())
+    edge_index = torch.tensor([[0, 1], [1, 0]])
+    atomic_numbers = torch.tensor([1, 6])
+
+    zbl_base = ZBLBasis(p=6, zbl_scale=1.0)
+    output_base = zbl_base(x, node_attrs, edge_index, atomic_numbers)
+
+    for scale in [0.5, 2.0, 5.0, 10.0]:
+        zbl_scaled = ZBLBasis(p=6, zbl_scale=scale)
+        output_scaled = zbl_scaled(x, node_attrs, edge_index, atomic_numbers)
+        assert torch.allclose(output_scaled, output_base * scale, rtol=1e-5), \
+            f"zbl_scale={scale} failed: expected {output_base * scale}, got {output_scaled}"
 
 
 @pytest.fixture

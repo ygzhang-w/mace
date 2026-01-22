@@ -182,6 +182,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=None,
     )
     parser.add_argument(
+        "--zbl_scale",
+        help="scaling factor for ZBL potential energy to adjust its magnitude",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
         "--distance_transform",
         help="use distance transform for radial basis functions",
         default="None",

@@ -153,7 +153,14 @@ class ZBLBasis(torch.nn.Module):
 
     p: torch.Tensor
 
-    def __init__(self, p=6, trainable=False, pair_r_max: torch.Tensor = None, **kwargs):
+    def __init__(
+        self,
+        p=6,
+        trainable=False,
+        pair_r_max: torch.Tensor = None,
+        zbl_scale: float = 1.0,
+        **kwargs,
+    ):
         super().__init__()
         if "r_max" in kwargs:
             logging.warning(
@@ -174,6 +181,10 @@ class ZBLBasis(torch.nn.Module):
                 ase.data.covalent_radii,
                 dtype=torch.get_default_dtype(),
             ),
+        )
+        # ZBL scaling factor to adjust energy magnitude
+        self.register_buffer(
+            "zbl_scale", torch.tensor(zbl_scale, dtype=torch.get_default_dtype())
         )
         # pair_r_max: 2D tensor of shape (max_z, max_z) where pair_r_max[Z_u, Z_v] = r_max
         # Values of -1.0 indicate "use covalent radii fallback"
@@ -234,12 +245,12 @@ class ZBLBasis(torch.nn.Module):
             r_max = self.covalent_radii[Z_u] + self.covalent_radii[Z_v]
 
         envelope = PolynomialCutoff.calculate_envelope(x, r_max, self.p)
-        v_edges = 0.5 * v_edges * envelope
+        v_edges = 0.5 * v_edges * envelope * self.zbl_scale
         V_ZBL = scatter_sum(v_edges, receiver, dim=0, dim_size=node_attrs.size(0))
         return V_ZBL.squeeze(-1)
 
     def __repr__(self):
-        return f"{self.__class__.__name__}(c={self.c}, pair_r_max={'custom' if self.pair_r_max is not None else 'covalent_radii'})"
+        return f"{self.__class__.__name__}(c={self.c}, zbl_scale={self.zbl_scale.item()}, pair_r_max={'custom' if self.pair_r_max is not None else 'covalent_radii'})"
 
 
 @compile_mode("script")

@@ -261,6 +261,7 @@ def _build_model(
             use_last_readout_only=args.use_last_readout_only,
             use_agnostic_product=args.use_agnostic_product,
             pair_r_max=pair_r_max,
+            zbl_scale=args.zbl_scale,
         )
     if args.model == "ScaleShiftMACE":
         return modules.ScaleShiftMACE(
@@ -281,6 +282,7 @@ def _build_model(
             use_last_readout_only=args.use_last_readout_only,
             use_agnostic_product=args.use_agnostic_product,
             pair_r_max=pair_r_max,
+            zbl_scale=args.zbl_scale,
         )
     if args.model == "FoundationMACE":
         return modules.ScaleShiftMACE(**model_config_foundation)
@@ -370,5 +372,6 @@ def _build_model(
             use_last_readout_only=args.use_last_readout_only,
             use_agnostic_product=args.use_agnostic_product,
             pair_r_max=pair_r_max,
+            zbl_scale=args.zbl_scale,
         )
     raise RuntimeError(f"Unknown model: '{args.model}'")

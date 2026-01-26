@@ -228,6 +228,7 @@ def train(
     patience_counter = 0
     swa_start = True
     keep_last = False
+    should_stop = False
     if log_wandb:
         import wandb
 
@@ -358,6 +359,7 @@ def train(
                             logging.info(
                                 f"Stopping optimization after {patience_counter} epochs without improvement"
                             )
+                            should_stop = True
                             if exit_now is not None:
                                 exit_now.fill_(1)
                     if save_all_checkpoints:
@@ -391,6 +393,9 @@ def train(
             torch.distributed.broadcast(exit_now, src=0)
             if exit_now == 1:
                 break
+        elif should_stop:
+            # For non-distributed training, break directly when patience is reached
+            break
 
         epoch += 1
 

@@ -202,7 +202,7 @@ def configure_model(
             train_loader, z_table, epsilon=args.pair_repulsion_epsilon
         )
         pair_r_max = create_pair_r_max_tensor(min_pair_distances)
-        logging.info("Using computed pair distances for ZBL r_max")
+        logging.info(f"Using computed pair distances for {args.pair_repulsion_type.upper()} r_max")
 
     model = _build_model(args, model_config, model_config_foundation, heads, pair_r_max)
 
@@ -262,6 +262,10 @@ def _build_model(
             use_agnostic_product=args.use_agnostic_product,
             pair_r_max=pair_r_max,
             zbl_scale=args.zbl_scale,
+            pair_repulsion_type=args.pair_repulsion_type,
+            lj_epsilon=args.lj_epsilon,
+            lj_sigma=args.lj_sigma,
+            lj_scale=args.lj_scale,
         )
     if args.model == "ScaleShiftMACE":
         return modules.ScaleShiftMACE(
@@ -283,6 +287,10 @@ def _build_model(
             use_agnostic_product=args.use_agnostic_product,
             pair_r_max=pair_r_max,
             zbl_scale=args.zbl_scale,
+            pair_repulsion_type=args.pair_repulsion_type,
+            lj_epsilon=args.lj_epsilon,
+            lj_sigma=args.lj_sigma,
+            lj_scale=args.lj_scale,
         )
     if args.model == "FoundationMACE":
         return modules.ScaleShiftMACE(**model_config_foundation)

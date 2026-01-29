@@ -254,6 +254,123 @@ class ZBLBasis(torch.nn.Module):
 
 
 @compile_mode("script")
+class LJBasis(torch.nn.Module):
+    """Implementation of Lennard-Jones 12-6 potential with polynomial cutoff envelope.
+
+    V_LJ(r) = 4 * epsilon * [(sigma/r)^12 - (sigma/r)^6] * envelope(r)
+
+    Args:
+        p: Polynomial cutoff order (default: 6)
+        trainable: Whether epsilon and sigma are trainable parameters (default: False)
+        pair_r_max: Custom r_max tensor of shape (max_z, max_z), values of -1.0 indicate
+                    "use covalent radii fallback"
+        lj_epsilon: Energy depth parameter in eV (default: 0.01)
+        lj_sigma: Zero potential distance in Angstrom (default: 3.0)
+        lj_scale: Global scaling factor for the potential (default: 1.0)
+    """
+
+    p: torch.Tensor
+
+    def __init__(
+        self,
+        p: int = 6,
+        trainable: bool = False,
+        pair_r_max: torch.Tensor = None,
+        lj_epsilon: float = 0.01,
+        lj_sigma: float = 3.0,
+        lj_scale: float = 1.0,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.register_buffer("p", torch.tensor(p, dtype=torch.int))
+        self.register_buffer(
+            "covalent_radii",
+            torch.tensor(
+                ase.data.covalent_radii,
+                dtype=torch.get_default_dtype(),
+            ),
+        )
+        # LJ scaling factor to adjust energy magnitude
+        self.register_buffer(
+            "lj_scale", torch.tensor(lj_scale, dtype=torch.get_default_dtype())
+        )
+        # pair_r_max: 2D tensor of shape (max_z, max_z) where pair_r_max[Z_u, Z_v] = r_max
+        # Values of -1.0 indicate "use covalent radii fallback"
+        if pair_r_max is not None:
+            self.register_buffer("pair_r_max", pair_r_max)
+        else:
+            self.pair_r_max = None
+
+        # LJ parameters: epsilon (energy depth) and sigma (zero potential distance)
+        if trainable:
+            self.epsilon = torch.nn.Parameter(
+                torch.tensor(lj_epsilon, dtype=torch.get_default_dtype()),
+                requires_grad=True,
+            )
+            self.sigma = torch.nn.Parameter(
+                torch.tensor(lj_sigma, dtype=torch.get_default_dtype()),
+                requires_grad=True,
+            )
+        else:
+            self.register_buffer(
+                "epsilon", torch.tensor(lj_epsilon, dtype=torch.get_default_dtype())
+            )
+            self.register_buffer(
+                "sigma", torch.tensor(lj_sigma, dtype=torch.get_default_dtype())
+            )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        node_attrs: torch.Tensor,
+        edge_index: torch.Tensor,
+        atomic_numbers: torch.Tensor,
+    ) -> torch.Tensor:
+        sender = edge_index[0]
+        receiver = edge_index[1]
+        node_atomic_numbers = atomic_numbers[torch.argmax(node_attrs, dim=1)].unsqueeze(
+            -1
+        )
+        Z_u = node_atomic_numbers[sender].to(torch.int64)
+        Z_v = node_atomic_numbers[receiver].to(torch.int64)
+
+        # Prevent numerical overflow by clamping minimum distance
+        x_safe = torch.clamp(x, min=0.5)
+
+        # Compute LJ potential: V = 4*epsilon * [(sigma/r)^12 - (sigma/r)^6]
+        sigma_over_r = self.sigma / x_safe
+        sigma_over_r_6 = torch.pow(sigma_over_r, 6)
+        sigma_over_r_12 = torch.pow(sigma_over_r_6, 2)
+        v_edges = 4.0 * self.epsilon * (sigma_over_r_12 - sigma_over_r_6)
+
+        # Compute r_max for each edge (same logic as ZBLBasis)
+        if self.pair_r_max is not None:
+            # Use pair_r_max tensor if available
+            Z_u_flat = Z_u.squeeze(-1)
+            Z_v_flat = Z_v.squeeze(-1)
+            r_max = self.pair_r_max[Z_u_flat, Z_v_flat].unsqueeze(-1)
+            # Fallback to covalent radii where pair_r_max is -1.0
+            covalent_r_max = self.covalent_radii[Z_u] + self.covalent_radii[Z_v]
+            r_max = torch.where(r_max < 0, covalent_r_max, r_max)
+        else:
+            # Default: use covalent radii sum
+            r_max = self.covalent_radii[Z_u] + self.covalent_radii[Z_v]
+
+        envelope = PolynomialCutoff.calculate_envelope(x, r_max, self.p)
+        v_edges = 0.5 * v_edges * envelope * self.lj_scale
+        V_LJ = scatter_sum(v_edges, receiver, dim=0, dim_size=node_attrs.size(0))
+        return V_LJ.squeeze(-1)
+
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__}(epsilon={self.epsilon.item():.4f}, "
+            f"sigma={self.sigma.item():.3f}, lj_scale={self.lj_scale.item()}, "
+            f"pair_r_max={'custom' if self.pair_r_max is not None else 'covalent_radii'})"
+        )
+
+
+@compile_mode("script")
 class AgnesiTransform(torch.nn.Module):
     """Agnesi transform - see section on Radial transformations in
     ACEpotentials.jl, JCP 2023 (https://doi.org/10.1063/5.0158783).

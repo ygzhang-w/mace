@@ -448,3 +448,120 @@ def test_atomic_virials_stresses():
     assert torch.allclose(
         summed_atomic_stresses, total_stress.squeeze(0), atol=1e-6
     ), f"Sum of atomic stresses (normalized by volume) {summed_atomic_stresses} does not match total stress {total_stress.squeeze(0)}"
+
+
+def test_mace_with_lj_pair_repulsion():
+    """Test MACE model with LJ pair repulsion."""
+    atomic_energies_single = np.array([1.0, 3.0], dtype=float)
+    model_config = dict(
+        r_max=5,
+        num_bessel=8,
+        num_polynomial_cutoff=6,
+        max_ell=3,
+        interaction_cls=modules.interaction_classes[
+            "RealAgnosticResidualInteractionBlock"
+        ],
+        interaction_cls_first=modules.interaction_classes[
+            "RealAgnosticResidualInteractionBlock"
+        ],
+        num_interactions=2,
+        num_elements=2,
+        hidden_irreps=o3.Irreps("32x0e"),
+        MLP_irreps=o3.Irreps("16x0e"),
+        gate=torch.nn.functional.silu,
+        atomic_energies=atomic_energies_single,
+        avg_num_neighbors=8,
+        atomic_numbers=table.zs,
+        correlation=3,
+        pair_repulsion=True,
+        pair_repulsion_type="lj",
+        lj_epsilon=0.01,
+        lj_sigma=3.0,
+        lj_scale=1.0,
+        atomic_inter_scale=1.0,
+        atomic_inter_shift=0.0,
+    )
+    model = modules.ScaleShiftMACE(**model_config)
+
+    # Verify that the model uses LJBasis
+    assert hasattr(model, "pair_repulsion_fn")
+    assert model.pair_repulsion_fn.__class__.__name__ == "LJBasis"
+
+    # Test forward pass
+    atomic_data = data.AtomicData.from_config(config, z_table=table, cutoff=3.0)
+    data_loader = torch_geometric.dataloader.DataLoader(
+        dataset=[atomic_data],
+        batch_size=1,
+        shuffle=False,
+        drop_last=False,
+    )
+    batch = next(iter(data_loader))
+    output = model(batch.to_dict(), training=True)
+    assert output["energy"] is not None
+    assert output["forces"] is not None
+
+
+def test_mace_pair_repulsion_type_switching():
+    """Test switching between ZBL and LJ via pair_repulsion_type."""
+    atomic_energies_single = np.array([1.0, 3.0], dtype=float)
+    base_config = dict(
+        r_max=5,
+        num_bessel=8,
+        num_polynomial_cutoff=6,
+        max_ell=2,
+        interaction_cls=modules.interaction_classes[
+            "RealAgnosticResidualInteractionBlock"
+        ],
+        interaction_cls_first=modules.interaction_classes[
+            "RealAgnosticResidualInteractionBlock"
+        ],
+        num_interactions=2,
+        num_elements=2,
+        hidden_irreps=o3.Irreps("32x0e"),
+        MLP_irreps=o3.Irreps("16x0e"),
+        gate=torch.nn.functional.silu,
+        atomic_energies=atomic_energies_single,
+        avg_num_neighbors=8,
+        atomic_numbers=table.zs,
+        correlation=3,
+        pair_repulsion=True,
+        atomic_inter_scale=1.0,
+        atomic_inter_shift=0.0,
+    )
+
+    # Test ZBL (default)
+    model_zbl = modules.ScaleShiftMACE(
+        **base_config,
+        pair_repulsion_type="zbl",
+        zbl_scale=1.0,
+    )
+    assert model_zbl.pair_repulsion_fn.__class__.__name__ == "ZBLBasis"
+
+    # Test LJ
+    model_lj = modules.ScaleShiftMACE(
+        **base_config,
+        pair_repulsion_type="lj",
+        lj_epsilon=0.01,
+        lj_sigma=3.0,
+        lj_scale=1.0,
+    )
+    assert model_lj.pair_repulsion_fn.__class__.__name__ == "LJBasis"
+
+    # Both models should produce valid outputs
+    atomic_data = data.AtomicData.from_config(config, z_table=table, cutoff=3.0)
+    data_loader = torch_geometric.dataloader.DataLoader(
+        dataset=[atomic_data],
+        batch_size=1,
+        shuffle=False,
+        drop_last=False,
+    )
+    batch = next(iter(data_loader))
+
+    output_zbl = model_zbl(batch.to_dict(), training=True)
+    output_lj = model_lj(batch.to_dict(), training=True)
+
+    assert output_zbl["energy"] is not None
+    assert output_lj["energy"] is not None
+    # The energies should be different since different potentials are used
+    # (this is a weak test, but ensures both models work)
+

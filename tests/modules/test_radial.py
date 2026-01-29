@@ -2,7 +2,7 @@ import pytest
 import torch
 import numpy as np
 
-from mace.modules.radial import AgnesiTransform, ZBLBasis
+from mace.modules.radial import AgnesiTransform, LJBasis, ZBLBasis
 
 
 @pytest.fixture
@@ -159,6 +159,160 @@ def test_zbl_basis_zbl_scale_various_values():
         output_scaled = zbl_scaled(x, node_attrs, edge_index, atomic_numbers)
         assert torch.allclose(output_scaled, output_base * scale, rtol=1e-5), \
             f"zbl_scale={scale} failed: expected {output_base * scale}, got {output_scaled}"
+
+
+# LJBasis tests
+@pytest.fixture
+def lj_basis():
+    return LJBasis(p=6, trainable=False)
+
+
+def test_lj_basis_initialization(lj_basis):
+    """Test LJBasis initialization with default parameters."""
+    assert lj_basis.p == torch.tensor(6)
+    assert lj_basis.epsilon.item() == pytest.approx(0.01, rel=1e-4)
+    assert lj_basis.sigma.item() == pytest.approx(3.0, rel=1e-4)
+    assert lj_basis.lj_scale.item() == pytest.approx(1.0, rel=1e-4)
+    assert not lj_basis.epsilon.requires_grad
+    assert not lj_basis.sigma.requires_grad
+    assert lj_basis.pair_r_max is None
+
+
+def test_lj_basis_custom_params():
+    """Test LJBasis with custom epsilon and sigma."""
+    lj = LJBasis(p=6, lj_epsilon=0.02, lj_sigma=2.5, lj_scale=0.5)
+    assert lj.epsilon.item() == pytest.approx(0.02, rel=1e-4)
+    assert lj.sigma.item() == pytest.approx(2.5, rel=1e-4)
+    assert lj.lj_scale.item() == pytest.approx(0.5, rel=1e-4)
+
+
+def test_trainable_lj_basis_initialization():
+    """Test LJBasis with trainable parameters."""
+    lj_basis = LJBasis(p=6, trainable=True)
+    assert lj_basis.p == torch.tensor(6)
+    assert lj_basis.epsilon.item() == pytest.approx(0.01, rel=1e-4)
+    assert lj_basis.sigma.item() == pytest.approx(3.0, rel=1e-4)
+    assert lj_basis.epsilon.requires_grad
+    assert lj_basis.sigma.requires_grad
+
+
+def test_lj_forward(lj_basis):
+    """Test LJBasis forward pass."""
+    x = torch.tensor([1.0, 1.0, 2.0]).unsqueeze(-1)  # [n_edges]
+    node_attrs = torch.tensor(
+        [[1, 0], [0, 1]], dtype=torch.get_default_dtype()
+    )  # [n_nodes, n_node_features] - one_hot encoding of atomic numbers
+    edge_index = torch.tensor([[0, 1, 1], [1, 0, 1]])  # [2, n_edges]
+    atomic_numbers = torch.tensor([1, 6])  # [n_nodes]
+    output = lj_basis(x, node_attrs, edge_index, atomic_numbers)
+
+    assert output.shape == torch.Size([node_attrs.shape[0]])
+    assert torch.is_tensor(output)
+
+
+def test_lj_basis_with_pair_r_max():
+    """Test LJBasis with custom pair_r_max tensor."""
+    pair_r_max = torch.full((119, 119), -1.0, dtype=torch.get_default_dtype())
+    pair_r_max[1, 6] = 1.5
+    pair_r_max[6, 1] = 1.5
+    pair_r_max[1, 1] = 1.2
+    pair_r_max[6, 6] = 2.0
+
+    lj_basis = LJBasis(p=6, trainable=False, pair_r_max=pair_r_max)
+
+    assert lj_basis.pair_r_max is not None
+    assert lj_basis.pair_r_max.shape == (119, 119)
+    assert lj_basis.pair_r_max[1, 6] == 1.5
+    assert lj_basis.pair_r_max[6, 1] == 1.5
+
+    # Test forward pass with custom r_max
+    x = torch.tensor([1.0, 1.0, 2.0]).unsqueeze(-1)  # [n_edges, 1]
+    node_attrs = torch.tensor(
+        [[1, 0], [0, 1]], dtype=torch.get_default_dtype()
+    )  # [n_nodes, n_node_features]
+    edge_index = torch.tensor([[0, 1, 1], [1, 0, 1]])  # [2, n_edges]
+    atomic_numbers = torch.tensor([1, 6])  # [n_nodes]
+
+    output = lj_basis(x, node_attrs, edge_index, atomic_numbers)
+    assert output.shape == torch.Size([node_attrs.shape[0]])
+
+
+def test_lj_basis_lj_scale():
+    """Test LJBasis lj_scale parameter."""
+    # Test default lj_scale = 1.0
+    lj_default = LJBasis(p=6, trainable=False)
+    assert lj_default.lj_scale.item() == 1.0
+
+    # Test custom lj_scale
+    lj_scaled = LJBasis(p=6, trainable=False, lj_scale=2.0)
+    assert lj_scaled.lj_scale.item() == 2.0
+
+    # Test forward pass with different scales
+    x = torch.tensor([1.0, 1.0, 2.0]).unsqueeze(-1)  # [n_edges, 1]
+    node_attrs = torch.tensor(
+        [[1, 0], [0, 1]], dtype=torch.get_default_dtype()
+    )  # [n_nodes, n_node_features]
+    edge_index = torch.tensor([[0, 1, 1], [1, 0, 1]])  # [2, n_edges]
+    atomic_numbers = torch.tensor([1, 6])  # [n_nodes]
+
+    output_default = lj_default(x, node_attrs, edge_index, atomic_numbers)
+    output_scaled = lj_scaled(x, node_attrs, edge_index, atomic_numbers)
+
+    # Output should scale linearly with lj_scale
+    assert torch.allclose(output_scaled, output_default * 2.0, rtol=1e-5)
+
+
+def test_lj_basis_lj_scale_various_values():
+    """Test LJBasis with various lj_scale values."""
+    x = torch.tensor([1.0, 1.0]).unsqueeze(-1)
+    node_attrs = torch.tensor([[1, 0], [0, 1]], dtype=torch.get_default_dtype())
+    edge_index = torch.tensor([[0, 1], [1, 0]])
+    atomic_numbers = torch.tensor([1, 6])
+
+    lj_base = LJBasis(p=6, lj_scale=1.0)
+    output_base = lj_base(x, node_attrs, edge_index, atomic_numbers)
+
+    for scale in [0.5, 2.0, 5.0, 10.0]:
+        lj_scaled = LJBasis(p=6, lj_scale=scale)
+        output_scaled = lj_scaled(x, node_attrs, edge_index, atomic_numbers)
+        assert torch.allclose(output_scaled, output_base * scale, rtol=1e-5), \
+            f"lj_scale={scale} failed: expected {output_base * scale}, got {output_scaled}"
+
+
+def test_lj_basis_repr():
+    """Test that repr correctly shows LJBasis parameters."""
+    lj_default = LJBasis(p=6)
+    repr_str = repr(lj_default)
+    assert "LJBasis" in repr_str
+    assert "epsilon=" in repr_str
+    assert "sigma=" in repr_str
+    assert "lj_scale=1.0" in repr_str
+    assert "covalent_radii" in repr_str
+
+    pair_r_max = torch.full((119, 119), -1.0, dtype=torch.get_default_dtype())
+    lj_custom = LJBasis(p=6, pair_r_max=pair_r_max)
+    assert "custom" in repr(lj_custom)
+
+
+def test_lj_vs_zbl_interface_consistency():
+    """Test that LJBasis and ZBLBasis have consistent interfaces."""
+    pair_r_max = torch.full((10, 10), 3.0, dtype=torch.get_default_dtype())
+
+    lj = LJBasis(p=6, pair_r_max=pair_r_max, lj_scale=0.5)
+    zbl = ZBLBasis(p=6, pair_r_max=pair_r_max, zbl_scale=0.5)
+
+    # Create same input
+    x = torch.linspace(1.0, 4.0, 5).unsqueeze(-1)
+    node_attrs = torch.tensor([[1, 0], [0, 1]], dtype=torch.get_default_dtype())
+    edge_index = torch.tensor([[0, 0, 1, 1, 0], [1, 0, 0, 1, 1]])
+    atomic_numbers = torch.tensor([1, 8])
+
+    # Verify both can run and produce same shape output
+    E_lj = lj(x, node_attrs, edge_index, atomic_numbers)
+    E_zbl = zbl(x, node_attrs, edge_index, atomic_numbers)
+
+    assert E_lj.shape == E_zbl.shape
+    assert E_lj.shape == (2,)
 
 
 @pytest.fixture

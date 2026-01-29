@@ -12,7 +12,7 @@ from e3nn import o3
 from e3nn.util.jit import compile_mode
 
 from mace.modules.embeddings import GenericJointEmbedding
-from mace.modules.radial import ZBLBasis
+from mace.modules.radial import LJBasis, ZBLBasis
 from mace.tools.scatter import scatter_mean, scatter_sum
 from mace.tools.torch_tools import get_change_of_basis, spherical_to_cartesian
 
@@ -81,6 +81,10 @@ class MACE(torch.nn.Module):
         readout_cls: Optional[Type[NonLinearReadoutBlock]] = NonLinearReadoutBlock,
         pair_r_max: Optional[torch.Tensor] = None,
         zbl_scale: float = 1.0,
+        pair_repulsion_type: str = "zbl",
+        lj_epsilon: float = 0.01,
+        lj_sigma: float = 3.0,
+        lj_scale: float = 1.0,
     ):
         super().__init__()
         self.register_buffer(
@@ -140,9 +144,20 @@ class MACE(torch.nn.Module):
         )
         edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
         if pair_repulsion:
-            self.pair_repulsion_fn = ZBLBasis(
-                p=num_polynomial_cutoff, pair_r_max=pair_r_max, zbl_scale=zbl_scale
-            )
+            if pair_repulsion_type == "zbl":
+                self.pair_repulsion_fn = ZBLBasis(
+                    p=num_polynomial_cutoff, pair_r_max=pair_r_max, zbl_scale=zbl_scale
+                )
+            elif pair_repulsion_type == "lj":
+                self.pair_repulsion_fn = LJBasis(
+                    p=num_polynomial_cutoff,
+                    pair_r_max=pair_r_max,
+                    lj_epsilon=lj_epsilon,
+                    lj_sigma=lj_sigma,
+                    lj_scale=lj_scale,
+                )
+            else:
+                raise ValueError(f"Unknown pair_repulsion_type: {pair_repulsion_type}")
             self.pair_repulsion = True
 
         if not use_so3:

@@ -188,6 +188,31 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=1.0,
     )
     parser.add_argument(
+        "--pair_repulsion_type",
+        help="Type of pair repulsion potential: 'zbl' or 'lj'",
+        type=str,
+        choices=["zbl", "lj"],
+        default="zbl",
+    )
+    parser.add_argument(
+        "--lj_epsilon",
+        help="Energy depth (eV) for Lennard-Jones potential",
+        type=float,
+        default=0.01,
+    )
+    parser.add_argument(
+        "--lj_sigma",
+        help="Zero potential distance (Angstrom) for Lennard-Jones potential",
+        type=float,
+        default=3.0,
+    )
+    parser.add_argument(
+        "--lj_scale",
+        help="Scaling factor for Lennard-Jones potential energy",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
         "--distance_transform",
         help="use distance transform for radial basis functions",
         default="None",

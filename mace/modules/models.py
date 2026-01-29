@@ -12,7 +12,7 @@ from e3nn import o3
 from e3nn.util.jit import compile_mode
 
 from mace.modules.embeddings import GenericJointEmbedding
-from mace.modules.radial import LJBasis, ZBLBasis
+from mace.modules.radial import LJBasis, LJRepulsionBasis, ZBLBasis
 from mace.tools.scatter import scatter_mean, scatter_sum
 from mace.tools.torch_tools import get_change_of_basis, spherical_to_cartesian
 
@@ -152,6 +152,12 @@ class MACE(torch.nn.Module):
                 self.pair_repulsion_fn = LJBasis(
                     p=num_polynomial_cutoff,
                     pair_r_max=pair_r_max,
+                    lj_epsilon=lj_epsilon,
+                    lj_sigma=lj_sigma,
+                    lj_scale=lj_scale,
+                )
+            elif pair_repulsion_type == "lj_repulsion":
+                self.pair_repulsion_fn = LJRepulsionBasis(
                     lj_epsilon=lj_epsilon,
                     lj_sigma=lj_sigma,
                     lj_scale=lj_scale,

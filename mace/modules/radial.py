@@ -371,6 +371,86 @@ class LJBasis(torch.nn.Module):
 
 
 @compile_mode("script")
+class LJRepulsionBasis(torch.nn.Module):
+    """Implementation of Lennard-Jones repulsion-only potential (no cutoff envelope).
+
+    V_LJ_repulsion(r) = 4 * epsilon * (sigma/r)^12 * lj_scale
+
+    This class only uses the repulsive (r^-12) term of the LJ potential,
+    without the attractive (r^-6) term and without polynomial cutoff envelope.
+    The pair_repulsion_epsilon parameter has no effect on this potential.
+
+    Args:
+        trainable: Whether epsilon and sigma are trainable parameters (default: False)
+        lj_epsilon: Energy depth parameter in eV (default: 0.01)
+        lj_sigma: Zero potential distance in Angstrom (default: 3.0)
+        lj_scale: Global scaling factor for the potential (default: 1.0)
+    """
+
+    def __init__(
+        self,
+        trainable: bool = False,
+        lj_epsilon: float = 0.01,
+        lj_sigma: float = 3.0,
+        lj_scale: float = 1.0,
+        **kwargs,
+    ):
+        super().__init__()
+
+        # LJ scaling factor to adjust energy magnitude
+        self.register_buffer(
+            "lj_scale", torch.tensor(lj_scale, dtype=torch.get_default_dtype())
+        )
+
+        # LJ parameters: epsilon (energy depth) and sigma (zero potential distance)
+        if trainable:
+            self.epsilon = torch.nn.Parameter(
+                torch.tensor(lj_epsilon, dtype=torch.get_default_dtype()),
+                requires_grad=True,
+            )
+            self.sigma = torch.nn.Parameter(
+                torch.tensor(lj_sigma, dtype=torch.get_default_dtype()),
+                requires_grad=True,
+            )
+        else:
+            self.register_buffer(
+                "epsilon", torch.tensor(lj_epsilon, dtype=torch.get_default_dtype())
+            )
+            self.register_buffer(
+                "sigma", torch.tensor(lj_sigma, dtype=torch.get_default_dtype())
+            )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        node_attrs: torch.Tensor,
+        edge_index: torch.Tensor,
+        atomic_numbers: torch.Tensor,
+    ) -> torch.Tensor:
+        receiver = edge_index[1]
+
+        # Prevent numerical overflow by clamping minimum distance
+        x_safe = torch.clamp(x, min=0.5)
+
+        # Compute LJ repulsion-only potential: V = 4*epsilon * (sigma/r)^12
+        sigma_over_r = self.sigma / x_safe
+        sigma_over_r_12 = torch.pow(sigma_over_r, 12)
+        v_edges = 4.0 * self.epsilon * sigma_over_r_12
+
+        # No polynomial cutoff envelope - apply only scale factor
+        # Factor of 0.5 to avoid double counting edges
+        v_edges = 0.5 * v_edges * self.lj_scale
+        V_LJ = scatter_sum(v_edges, receiver, dim=0, dim_size=node_attrs.size(0))
+        return V_LJ.squeeze(-1)
+
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__}(epsilon={self.epsilon.item():.4f}, "
+            f"sigma={self.sigma.item():.3f}, lj_scale={self.lj_scale.item()})"
+        )
+
+
+@compile_mode("script")
 class AgnesiTransform(torch.nn.Module):
     """Agnesi transform - see section on Radial transformations in
     ACEpotentials.jl, JCP 2023 (https://doi.org/10.1063/5.0158783).

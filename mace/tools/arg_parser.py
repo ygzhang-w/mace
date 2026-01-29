@@ -189,9 +189,9 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--pair_repulsion_type",
-        help="Type of pair repulsion potential: 'zbl' or 'lj'",
+        help="Type of pair repulsion potential: 'zbl', 'lj', or 'lj_repulsion'",
         type=str,
-        choices=["zbl", "lj"],
+        choices=["zbl", "lj", "lj_repulsion"],
         default="zbl",
     )
     parser.add_argument(

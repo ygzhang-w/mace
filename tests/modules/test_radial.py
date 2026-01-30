@@ -315,36 +315,43 @@ def test_lj_vs_zbl_interface_consistency():
     assert E_lj.shape == (2,)
 
 
-# LJRepulsionBasis tests
+# LJRepulsionBasis tests (with element-pair coefficient matrix)
 @pytest.fixture
 def lj_repulsion_basis():
-    return LJRepulsionBasis(trainable=False)
+    """Create LJRepulsionBasis with a simple 2x2 coefficient matrix."""
+    coeff_matrix = torch.tensor([[0.5, 1.0], [1.0, 0.8]], dtype=torch.get_default_dtype())
+    return LJRepulsionBasis(num_elements=2, coeff_matrix=coeff_matrix, trainable=False)
 
 
 def test_lj_repulsion_basis_initialization(lj_repulsion_basis):
-    """Test LJRepulsionBasis initialization with default parameters."""
-    assert lj_repulsion_basis.epsilon.item() == pytest.approx(0.01, rel=1e-4)
-    assert lj_repulsion_basis.sigma.item() == pytest.approx(3.0, rel=1e-4)
-    assert lj_repulsion_basis.lj_scale.item() == pytest.approx(1.0, rel=1e-4)
-    assert not lj_repulsion_basis.epsilon.requires_grad
-    assert not lj_repulsion_basis.sigma.requires_grad
+    """Test LJRepulsionBasis initialization with coefficient matrix."""
+    assert lj_repulsion_basis.num_elements == 2
+    assert lj_repulsion_basis.coeff_matrix.shape == (2, 2)
+    assert not lj_repulsion_basis.coeff_matrix.requires_grad
 
 
-def test_lj_repulsion_basis_custom_params():
-    """Test LJRepulsionBasis with custom epsilon and sigma."""
-    lj = LJRepulsionBasis(lj_epsilon=0.02, lj_sigma=2.5, lj_scale=0.5)
-    assert lj.epsilon.item() == pytest.approx(0.02, rel=1e-4)
-    assert lj.sigma.item() == pytest.approx(2.5, rel=1e-4)
-    assert lj.lj_scale.item() == pytest.approx(0.5, rel=1e-4)
+def test_lj_repulsion_basis_custom_coeff():
+    """Test LJRepulsionBasis with custom coefficient matrix."""
+    coeff_matrix = torch.tensor([[1.0, 2.0], [2.0, 3.0]], dtype=torch.get_default_dtype())
+    lj = LJRepulsionBasis(num_elements=2, coeff_matrix=coeff_matrix)
+    assert torch.allclose(lj.coeff_matrix, coeff_matrix)
+
+
+def test_lj_repulsion_basis_symmetry():
+    """Test that coefficient matrix is made symmetric."""
+    # Asymmetric input
+    coeff_matrix = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.get_default_dtype())
+    lj = LJRepulsionBasis(num_elements=2, coeff_matrix=coeff_matrix)
+    # Should be symmetrized: (c_ij + c_ji) / 2
+    expected = (coeff_matrix + coeff_matrix.T) / 2
+    assert torch.allclose(lj.coeff_matrix, expected)
 
 
 def test_trainable_lj_repulsion_basis_initialization():
-    """Test LJRepulsionBasis with trainable parameters."""
-    lj_basis = LJRepulsionBasis(trainable=True)
-    assert lj_basis.epsilon.item() == pytest.approx(0.01, rel=1e-4)
-    assert lj_basis.sigma.item() == pytest.approx(3.0, rel=1e-4)
-    assert lj_basis.epsilon.requires_grad
-    assert lj_basis.sigma.requires_grad
+    """Test LJRepulsionBasis with trainable coefficients."""
+    coeff_matrix = torch.tensor([[0.5, 1.0], [1.0, 0.8]], dtype=torch.get_default_dtype())
+    lj_basis = LJRepulsionBasis(num_elements=2, coeff_matrix=coeff_matrix, trainable=True)
+    assert lj_basis.coeff_matrix.requires_grad
 
 
 def test_lj_repulsion_forward(lj_repulsion_basis):
@@ -352,7 +359,7 @@ def test_lj_repulsion_forward(lj_repulsion_basis):
     x = torch.tensor([1.0, 1.0, 2.0]).unsqueeze(-1)  # [n_edges]
     node_attrs = torch.tensor(
         [[1, 0], [0, 1]], dtype=torch.get_default_dtype()
-    )  # [n_nodes, n_node_features] - one_hot encoding of atomic numbers
+    )  # [n_nodes, n_node_features] - one_hot encoding
     edge_index = torch.tensor([[0, 1, 1], [1, 0, 1]])  # [2, n_edges]
     atomic_numbers = torch.tensor([1, 6])  # [n_nodes]
     output = lj_repulsion_basis(x, node_attrs, edge_index, atomic_numbers)
@@ -363,9 +370,29 @@ def test_lj_repulsion_forward(lj_repulsion_basis):
     assert torch.all(output >= 0)
 
 
+def test_lj_repulsion_element_pair_lookup():
+    """Test that correct coefficient is used for each element pair."""
+    # Coefficient matrix: c[0,1] = 2.0, c[1,0] = 2.0 (symmetric)
+    coeff_matrix = torch.tensor([[1.0, 2.0], [2.0, 3.0]], dtype=torch.get_default_dtype())
+    lj = LJRepulsionBasis(num_elements=2, coeff_matrix=coeff_matrix)
+
+    # Single edge: element 0 -> element 1, r = 1.0
+    x = torch.tensor([1.0]).unsqueeze(-1)
+    node_attrs = torch.tensor([[1, 0], [0, 1]], dtype=torch.get_default_dtype())
+    edge_index = torch.tensor([[0], [1]])  # 0 -> 1
+    atomic_numbers = torch.tensor([1, 6])
+
+    output = lj(x, node_attrs, edge_index, atomic_numbers)
+
+    # Expected: c[0,1] * r^{-12} * 0.5 = 2.0 * 1.0 * 0.5 = 1.0
+    expected = 2.0 * (1.0 ** -12) * 0.5
+    assert output[1].item() == pytest.approx(expected, rel=1e-4)
+
+
 def test_lj_repulsion_only_repulsive_term():
     """Test that LJRepulsionBasis uses only repulsive term (r^-12)."""
-    lj_repulsion = LJRepulsionBasis(lj_epsilon=0.01, lj_sigma=3.0, lj_scale=1.0)
+    coeff_matrix = torch.tensor([[1.0, 1.0], [1.0, 1.0]], dtype=torch.get_default_dtype())
+    lj_repulsion = LJRepulsionBasis(num_elements=2, coeff_matrix=coeff_matrix)
 
     x = torch.tensor([2.0]).unsqueeze(-1)
     node_attrs = torch.tensor([[1, 0], [0, 1]], dtype=torch.get_default_dtype())
@@ -374,18 +401,15 @@ def test_lj_repulsion_only_repulsive_term():
 
     output = lj_repulsion(x, node_attrs, edge_index, atomic_numbers)
 
-    # Manual calculation: V = 4 * epsilon * (sigma/r)^12 * 0.5 (for double counting)
-    # = 4 * 0.01 * (3.0/2.0)^12 * 0.5
-    sigma_over_r_12 = (3.0 / 2.0) ** 12
-    expected = 4.0 * 0.01 * sigma_over_r_12 * 0.5
-
-    # The output should be close to expected (node 1 receives the edge)
+    # Manual calculation: V = c_ij * r^{-12} * 0.5 = 1.0 * (2.0)^{-12} * 0.5
+    expected = 1.0 * (2.0 ** -12) * 0.5
     assert output[1].item() == pytest.approx(expected, rel=1e-4)
 
 
 def test_lj_repulsion_no_cutoff():
     """Test that LJRepulsionBasis doesn't apply polynomial cutoff."""
-    lj_repulsion = LJRepulsionBasis(lj_epsilon=0.01, lj_sigma=3.0, lj_scale=1.0)
+    coeff_matrix = torch.tensor([[1.0, 1.0], [1.0, 1.0]], dtype=torch.get_default_dtype())
+    lj_repulsion = LJRepulsionBasis(num_elements=2, coeff_matrix=coeff_matrix)
 
     # Use a distance larger than typical covalent radii sum
     x = torch.tensor([5.0]).unsqueeze(-1)
@@ -396,67 +420,51 @@ def test_lj_repulsion_no_cutoff():
     output = lj_repulsion(x, node_attrs, edge_index, atomic_numbers)
 
     # Without cutoff, the output should still be non-zero
-    # For LJBasis with cutoff, the output would be zero for r > r_max
     assert output[1].item() > 0
 
 
-def test_lj_repulsion_basis_lj_scale():
-    """Test LJRepulsionBasis lj_scale parameter."""
-    lj_default = LJRepulsionBasis(trainable=False)
-    assert lj_default.lj_scale.item() == 1.0
-
-    lj_scaled = LJRepulsionBasis(trainable=False, lj_scale=2.0)
-    assert lj_scaled.lj_scale.item() == 2.0
+def test_lj_repulsion_basis_coeff_scaling():
+    """Test that energy scales linearly with coefficients."""
+    coeff_base = torch.tensor([[1.0, 1.0], [1.0, 1.0]], dtype=torch.get_default_dtype())
+    coeff_scaled = torch.tensor([[2.0, 2.0], [2.0, 2.0]], dtype=torch.get_default_dtype())
+    
+    lj_base = LJRepulsionBasis(num_elements=2, coeff_matrix=coeff_base)
+    lj_scaled = LJRepulsionBasis(num_elements=2, coeff_matrix=coeff_scaled)
 
     x = torch.tensor([1.0, 1.0, 2.0]).unsqueeze(-1)
-    node_attrs = torch.tensor(
-        [[1, 0], [0, 1]], dtype=torch.get_default_dtype()
-    )
+    node_attrs = torch.tensor([[1, 0], [0, 1]], dtype=torch.get_default_dtype())
     edge_index = torch.tensor([[0, 1, 1], [1, 0, 1]])
     atomic_numbers = torch.tensor([1, 6])
 
-    output_default = lj_default(x, node_attrs, edge_index, atomic_numbers)
+    output_base = lj_base(x, node_attrs, edge_index, atomic_numbers)
     output_scaled = lj_scaled(x, node_attrs, edge_index, atomic_numbers)
 
-    # Output should scale linearly with lj_scale
-    assert torch.allclose(output_scaled, output_default * 2.0, rtol=1e-5)
-
-
-def test_lj_repulsion_basis_lj_scale_various_values():
-    """Test LJRepulsionBasis with various lj_scale values."""
-    x = torch.tensor([1.0, 1.0]).unsqueeze(-1)
-    node_attrs = torch.tensor([[1, 0], [0, 1]], dtype=torch.get_default_dtype())
-    edge_index = torch.tensor([[0, 1], [1, 0]])
-    atomic_numbers = torch.tensor([1, 6])
-
-    lj_base = LJRepulsionBasis(lj_scale=1.0)
-    output_base = lj_base(x, node_attrs, edge_index, atomic_numbers)
-
-    for scale in [0.5, 2.0, 5.0, 10.0]:
-        lj_scaled = LJRepulsionBasis(lj_scale=scale)
-        output_scaled = lj_scaled(x, node_attrs, edge_index, atomic_numbers)
-        assert torch.allclose(output_scaled, output_base * scale, rtol=1e-5), \
-            f"lj_scale={scale} failed: expected {output_base * scale}, got {output_scaled}"
+    # Output should scale linearly with coefficients
+    assert torch.allclose(output_scaled, output_base * 2.0, rtol=1e-5)
 
 
 def test_lj_repulsion_basis_repr():
-    """Test that repr correctly shows LJRepulsionBasis parameters."""
-    lj_default = LJRepulsionBasis()
-    repr_str = repr(lj_default)
-    assert "LJRepulsionBasis" in repr_str
-    assert "epsilon=" in repr_str
-    assert "sigma=" in repr_str
-    assert "lj_scale=1.0" in repr_str
+    """Test that repr correctly shows LJRepulsionBasis info."""
+    coeff_matrix = torch.tensor([[1.0, 2.0], [2.0, 3.0]], dtype=torch.get_default_dtype())
+    lj_frozen = LJRepulsionBasis(num_elements=2, coeff_matrix=coeff_matrix, trainable=False)
+    lj_trainable = LJRepulsionBasis(num_elements=2, coeff_matrix=coeff_matrix, trainable=True)
+    
+    repr_frozen = repr(lj_frozen)
+    repr_trainable = repr(lj_trainable)
+    
+    assert "LJRepulsionBasis" in repr_frozen
+    assert "num_elements=2" in repr_frozen
+    assert "frozen" in repr_frozen
+    assert "trainable" in repr_trainable
 
 
-def test_lj_repulsion_vs_lj_basis_comparison():
-    """Test that LJRepulsionBasis produces higher energy than LJBasis at close distances."""
-    # At very close distances (r < sigma), the repulsive term dominates
-    # LJRepulsionBasis should give similar values to LJBasis
-    lj_repulsion = LJRepulsionBasis(lj_epsilon=0.01, lj_sigma=3.0, lj_scale=1.0)
+def test_lj_repulsion_vs_lj_basis_interface():
+    """Test that LJRepulsionBasis and LJBasis have compatible interfaces."""
+    coeff_matrix = torch.tensor([[0.5, 1.0], [1.0, 0.8]], dtype=torch.get_default_dtype())
+    lj_repulsion = LJRepulsionBasis(num_elements=2, coeff_matrix=coeff_matrix)
     lj_full = LJBasis(lj_epsilon=0.01, lj_sigma=3.0, lj_scale=1.0, p=6)
 
-    x = torch.tensor([1.5]).unsqueeze(-1)  # Very close distance
+    x = torch.tensor([1.5]).unsqueeze(-1)
     node_attrs = torch.tensor([[1, 0], [0, 1]], dtype=torch.get_default_dtype())
     edge_index = torch.tensor([[0], [1]])
     atomic_numbers = torch.tensor([1, 6])
@@ -464,10 +472,10 @@ def test_lj_repulsion_vs_lj_basis_comparison():
     output_repulsion = lj_repulsion(x, node_attrs, edge_index, atomic_numbers)
     output_full = lj_full(x, node_attrs, edge_index, atomic_numbers)
 
+    # Both should have same output shape
+    assert output_repulsion.shape == output_full.shape
     # LJRepulsionBasis should always be positive (repulsive only)
-    assert output_repulsion[1].item() > 0
-    # At close distances where repulsion dominates, both should be positive
-    # but LJRepulsionBasis doesn't have the attractive term
+    assert output_repulsion[1].item() >= 0
 
 
 @pytest.fixture

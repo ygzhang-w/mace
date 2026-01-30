@@ -372,53 +372,37 @@ class LJBasis(torch.nn.Module):
 
 @compile_mode("script")
 class LJRepulsionBasis(torch.nn.Module):
-    """Implementation of Lennard-Jones repulsion-only potential (no cutoff envelope).
+    """Implementation of Lennard-Jones repulsion-only potential with element-pair coefficients.
 
-    V_LJ_repulsion(r) = 4 * epsilon * (sigma/r)^12 * lj_scale
+    V_LJ_repulsion(r) = c_ij * r^{-12} * 0.5
 
-    This class only uses the repulsive (r^-12) term of the LJ potential,
-    without the attractive (r^-6) term and without polynomial cutoff envelope.
-    The pair_repulsion_epsilon parameter has no effect on this potential.
+    where c_ij is the coefficient for element pair (i, j), fitted via ridge regression.
+
+    This class uses per-element-pair coefficients instead of global epsilon/sigma parameters,
+    enabling automatic fitting based on training data.
 
     Args:
-        trainable: Whether epsilon and sigma are trainable parameters (default: False)
-        lj_epsilon: Energy depth parameter in eV (default: 0.01)
-        lj_sigma: Zero potential distance in Angstrom (default: 3.0)
-        lj_scale: Global scaling factor for the potential (default: 1.0)
+        num_elements: Number of element types in the model
+        coeff_matrix: [num_elements, num_elements] coefficient matrix (symmetric)
+        trainable: Whether coefficients are trainable during MACE training (default: False)
     """
 
     def __init__(
         self,
+        num_elements: int,
+        coeff_matrix: torch.Tensor,
         trainable: bool = False,
-        lj_epsilon: float = 0.01,
-        lj_sigma: float = 3.0,
-        lj_scale: float = 1.0,
-        **kwargs,
     ):
         super().__init__()
+        self.num_elements = num_elements
 
-        # LJ scaling factor to adjust energy magnitude
-        self.register_buffer(
-            "lj_scale", torch.tensor(lj_scale, dtype=torch.get_default_dtype())
-        )
+        # Ensure symmetry: c_ij = c_ji
+        coeff_matrix = (coeff_matrix + coeff_matrix.T) / 2
 
-        # LJ parameters: epsilon (energy depth) and sigma (zero potential distance)
         if trainable:
-            self.epsilon = torch.nn.Parameter(
-                torch.tensor(lj_epsilon, dtype=torch.get_default_dtype()),
-                requires_grad=True,
-            )
-            self.sigma = torch.nn.Parameter(
-                torch.tensor(lj_sigma, dtype=torch.get_default_dtype()),
-                requires_grad=True,
-            )
+            self.coeff_matrix = torch.nn.Parameter(coeff_matrix, requires_grad=True)
         else:
-            self.register_buffer(
-                "epsilon", torch.tensor(lj_epsilon, dtype=torch.get_default_dtype())
-            )
-            self.register_buffer(
-                "sigma", torch.tensor(lj_sigma, dtype=torch.get_default_dtype())
-            )
+            self.register_buffer("coeff_matrix", coeff_matrix)
 
     def forward(
         self,
@@ -427,27 +411,32 @@ class LJRepulsionBasis(torch.nn.Module):
         edge_index: torch.Tensor,
         atomic_numbers: torch.Tensor,
     ) -> torch.Tensor:
+        sender = edge_index[0]
         receiver = edge_index[1]
 
+        # Get element type indices from one-hot encoding
+        sender_z = torch.argmax(node_attrs[sender], dim=1)
+        receiver_z = torch.argmax(node_attrs[receiver], dim=1)
+
+        # Look up coefficients for each edge
+        c_ij = self.coeff_matrix[sender_z, receiver_z]
+
+        # Ensure x is 1D (squeeze if needed)
+        x_flat = x.squeeze(-1) if x.dim() > 1 else x
+
         # Prevent numerical overflow by clamping minimum distance
-        x_safe = torch.clamp(x, min=0.5)
+        x_safe = torch.clamp(x_flat, min=0.5)
 
-        # Compute LJ repulsion-only potential: V = 4*epsilon * (sigma/r)^12
-        sigma_over_r = self.sigma / x_safe
-        sigma_over_r_12 = torch.pow(sigma_over_r, 12)
-        v_edges = 4.0 * self.epsilon * sigma_over_r_12
+        # Compute LJ repulsion potential: V = c_ij * r^{-12} * 0.5
+        v_edges = c_ij * torch.pow(x_safe, -12) * 0.5
 
-        # No polynomial cutoff envelope - apply only scale factor
-        # Factor of 0.5 to avoid double counting edges
-        v_edges = 0.5 * v_edges * self.lj_scale
+        # Aggregate to nodes
         V_LJ = scatter_sum(v_edges, receiver, dim=0, dim_size=node_attrs.size(0))
         return V_LJ.squeeze(-1)
 
     def __repr__(self):
-        return (
-            f"{self.__class__.__name__}(epsilon={self.epsilon.item():.4f}, "
-            f"sigma={self.sigma.item():.3f}, lj_scale={self.lj_scale.item()})"
-        )
+        trainable_str = "trainable" if self.coeff_matrix.requires_grad else "frozen"
+        return f"{self.__class__.__name__}(num_elements={self.num_elements}, {trainable_str})"
 
 
 @compile_mode("script")

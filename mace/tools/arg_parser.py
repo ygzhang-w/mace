@@ -196,21 +196,39 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--lj_epsilon",
-        help="Energy depth (eV) for Lennard-Jones potential",
+        help="Energy depth (eV) for Lennard-Jones potential (used with --pair_repulsion_type lj)",
         type=float,
         default=0.01,
     )
     parser.add_argument(
         "--lj_sigma",
-        help="Zero potential distance (Angstrom) for Lennard-Jones potential",
+        help="Zero potential distance (Angstrom) for Lennard-Jones potential (used with --pair_repulsion_type lj)",
         type=float,
         default=3.0,
     )
     parser.add_argument(
         "--lj_scale",
-        help="Scaling factor for Lennard-Jones potential energy",
+        help="Scaling factor for Lennard-Jones potential energy (used with --pair_repulsion_type lj)",
         type=float,
         default=1.0,
+    )
+    parser.add_argument(
+        "--lj_ridge_alpha",
+        help="Ridge regression regularization parameter for LJ repulsion fitting (used with --pair_repulsion_type lj_repulsion)",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--lj_trainable",
+        help="Whether LJ coefficients are trainable during MACE training (used with --pair_repulsion_type lj_repulsion)",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "--num_distance_bins",
+        help="Number of distance bins for inverse frequency weighting in LJ repulsion fitting (used with --pair_repulsion_type lj_repulsion)",
+        type=int,
+        default=10,
     )
     parser.add_argument(
         "--distance_transform",

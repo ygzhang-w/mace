@@ -85,6 +85,8 @@ class MACE(torch.nn.Module):
         lj_epsilon: float = 0.01,
         lj_sigma: float = 3.0,
         lj_scale: float = 1.0,
+        lj_coeff_matrix: Optional[torch.Tensor] = None,
+        lj_trainable: bool = False,
     ):
         super().__init__()
         self.register_buffer(
@@ -157,10 +159,15 @@ class MACE(torch.nn.Module):
                     lj_scale=lj_scale,
                 )
             elif pair_repulsion_type == "lj_repulsion":
+                if lj_coeff_matrix is None:
+                    # Default initialization with small positive values
+                    lj_coeff_matrix = torch.ones(
+                        num_elements, num_elements, dtype=torch.get_default_dtype()
+                    ) * 0.01
                 self.pair_repulsion_fn = LJRepulsionBasis(
-                    lj_epsilon=lj_epsilon,
-                    lj_sigma=lj_sigma,
-                    lj_scale=lj_scale,
+                    num_elements=num_elements,
+                    coeff_matrix=lj_coeff_matrix,
+                    trainable=lj_trainable,
                 )
             else:
                 raise ValueError(f"Unknown pair_repulsion_type: {pair_repulsion_type}")

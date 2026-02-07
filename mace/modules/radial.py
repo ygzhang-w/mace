@@ -191,7 +191,8 @@ class ZBLBasis(torch.nn.Module):
         if pair_r_max is not None:
             self.register_buffer("pair_r_max", pair_r_max)
         else:
-            self.pair_r_max = None
+            # Register None as a buffer to ensure attribute exists
+            self.register_buffer("pair_r_max", None)
 
         if trainable:
             self.a_exp = torch.nn.Parameter(torch.tensor(0.300, requires_grad=True))
@@ -231,12 +232,14 @@ class ZBLBasis(torch.nn.Module):
         v_edges = (14.3996 * Z_u * Z_v) / x * phi
 
         # Compute r_max for each edge
-        if self.pair_r_max is not None:
+        # Use getattr for backward compatibility with old models that don't have pair_r_max
+        pair_r_max = getattr(self, "pair_r_max", None)
+        if pair_r_max is not None:
             # Use pair_r_max tensor if available
             # Flatten Z_u and Z_v for indexing
             Z_u_flat = Z_u.squeeze(-1)
             Z_v_flat = Z_v.squeeze(-1)
-            r_max = self.pair_r_max[Z_u_flat, Z_v_flat].unsqueeze(-1)
+            r_max = pair_r_max[Z_u_flat, Z_v_flat].unsqueeze(-1)
             # Fallback to covalent radii where pair_r_max is -1.0
             covalent_r_max = self.covalent_radii[Z_u] + self.covalent_radii[Z_v]
             r_max = torch.where(r_max < 0, covalent_r_max, r_max)
@@ -245,12 +248,16 @@ class ZBLBasis(torch.nn.Module):
             r_max = self.covalent_radii[Z_u] + self.covalent_radii[Z_v]
 
         envelope = PolynomialCutoff.calculate_envelope(x, r_max, self.p)
-        v_edges = 0.5 * v_edges * envelope * self.zbl_scale
+        # Use getattr for backward compatibility with old models that don't have zbl_scale
+        zbl_scale = getattr(self, "zbl_scale", torch.tensor(1.0))
+        v_edges = 0.5 * v_edges * envelope * zbl_scale
         V_ZBL = scatter_sum(v_edges, receiver, dim=0, dim_size=node_attrs.size(0))
         return V_ZBL.squeeze(-1)
 
     def __repr__(self):
-        return f"{self.__class__.__name__}(c={self.c}, zbl_scale={self.zbl_scale.item()}, pair_r_max={'custom' if self.pair_r_max is not None else 'covalent_radii'})"
+        zbl_scale = getattr(self, "zbl_scale", torch.tensor(1.0))
+        pair_r_max = getattr(self, "pair_r_max", None)
+        return f"{self.__class__.__name__}(c={self.c}, zbl_scale={zbl_scale.item()}, pair_r_max={'custom' if pair_r_max is not None else 'covalent_radii'})"
 
 
 @compile_mode("script")
@@ -300,7 +307,8 @@ class LJBasis(torch.nn.Module):
         if pair_r_max is not None:
             self.register_buffer("pair_r_max", pair_r_max)
         else:
-            self.pair_r_max = None
+            # Register None as a buffer to ensure attribute exists
+            self.register_buffer("pair_r_max", None)
 
         # LJ parameters: epsilon (energy depth) and sigma (zero potential distance)
         if trainable:
@@ -345,11 +353,13 @@ class LJBasis(torch.nn.Module):
         v_edges = 4.0 * self.epsilon * (sigma_over_r_12 - sigma_over_r_6)
 
         # Compute r_max for each edge (same logic as ZBLBasis)
-        if self.pair_r_max is not None:
+        # Use getattr for backward compatibility with old models that don't have pair_r_max
+        pair_r_max = getattr(self, "pair_r_max", None)
+        if pair_r_max is not None:
             # Use pair_r_max tensor if available
             Z_u_flat = Z_u.squeeze(-1)
             Z_v_flat = Z_v.squeeze(-1)
-            r_max = self.pair_r_max[Z_u_flat, Z_v_flat].unsqueeze(-1)
+            r_max = pair_r_max[Z_u_flat, Z_v_flat].unsqueeze(-1)
             # Fallback to covalent radii where pair_r_max is -1.0
             covalent_r_max = self.covalent_radii[Z_u] + self.covalent_radii[Z_v]
             r_max = torch.where(r_max < 0, covalent_r_max, r_max)
@@ -358,15 +368,19 @@ class LJBasis(torch.nn.Module):
             r_max = self.covalent_radii[Z_u] + self.covalent_radii[Z_v]
 
         envelope = PolynomialCutoff.calculate_envelope(x, r_max, self.p)
-        v_edges = 0.5 * v_edges * envelope * self.lj_scale
+        # Use getattr for backward compatibility with old models that don't have lj_scale
+        lj_scale = getattr(self, "lj_scale", torch.tensor(1.0))
+        v_edges = 0.5 * v_edges * envelope * lj_scale
         V_LJ = scatter_sum(v_edges, receiver, dim=0, dim_size=node_attrs.size(0))
         return V_LJ.squeeze(-1)
 
     def __repr__(self):
+        lj_scale = getattr(self, "lj_scale", torch.tensor(1.0))
+        pair_r_max = getattr(self, "pair_r_max", None)
         return (
             f"{self.__class__.__name__}(epsilon={self.epsilon.item():.4f}, "
-            f"sigma={self.sigma.item():.3f}, lj_scale={self.lj_scale.item()}, "
-            f"pair_r_max={'custom' if self.pair_r_max is not None else 'covalent_radii'})"
+            f"sigma={self.sigma.item():.3f}, lj_scale={lj_scale.item()}, "
+            f"pair_r_max={'custom' if pair_r_max is not None else 'covalent_radii'})"
         )
 
 

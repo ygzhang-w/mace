@@ -150,6 +150,43 @@ def weighted_mean_squared_error_atomic_energies(
 
 
 # ------------------------------------------------------------------------------
+# Group Energy Loss Functions
+# ------------------------------------------------------------------------------
+
+
+def weighted_mean_squared_error_group_energies(
+    ref: Batch, pred: TensorDict, ddp: Optional[bool] = None
+) -> torch.Tensor:
+    """
+    Compute weighted mean squared error for group energies.
+    Reference group energies are expected in ref["group_energies"] with shape [n_atoms,]
+    Predicted group energies are from pred["group_energy"] with shape [n_atoms,]
+    """
+    # Check if group_energies is available
+    if not hasattr(ref, "group_energies") or getattr(ref, "group_energies", None) is None:
+        raise ValueError(
+            "Group energies loss requires 'group_energies' data in the training set, "
+            "but it is missing. Please either: \n"
+            "1. Provide training data with 'group_energies' field, or \n"
+            "2. Use a different loss function that does not require group energies."
+        )
+
+    # Repeat per-graph weights to per-atom level.
+    configs_weight = torch.repeat_interleave(
+        ref.weight, ref.ptr[1:] - ref.ptr[:-1]
+    ).unsqueeze(-1)
+    configs_group_energies_weight = torch.repeat_interleave(
+        ref.group_energies_weight, ref.ptr[1:] - ref.ptr[:-1]
+    ).unsqueeze(-1)
+    raw_loss = (
+        configs_weight
+        * configs_group_energies_weight
+        * torch.square(ref["group_energies"] - pred["group_energy"].unsqueeze(-1))
+    )
+    return reduce_loss(raw_loss, ddp)
+
+
+# ------------------------------------------------------------------------------
 # Forces Loss Functions
 # ------------------------------------------------------------------------------
 
@@ -725,6 +762,37 @@ class WeightedForcesAtomicEnergiesLoss(torch.nn.Module):
         return (
             f"{self.__class__.__name__}(forces_weight={self.forces_weight:.3f}, "
             f"atomic_energies_weight={self.atomic_energies_weight:.3f})"
+        )
+
+
+class WeightedForcesGroupEnergiesLoss(torch.nn.Module):
+    """Loss combining forces and group energies (without total energy)."""
+
+    def __init__(self, forces_weight=1.0, group_energies_weight=1.0) -> None:
+        super().__init__()
+        self.register_buffer(
+            "forces_weight",
+            torch.tensor(forces_weight, dtype=torch.get_default_dtype()),
+        )
+        self.register_buffer(
+            "group_energies_weight",
+            torch.tensor(group_energies_weight, dtype=torch.get_default_dtype()),
+        )
+
+    def forward(
+        self, ref: Batch, pred: TensorDict, ddp: Optional[bool] = None
+    ) -> torch.Tensor:
+        loss_forces = mean_squared_error_forces(ref, pred, ddp)
+        loss_group_energies = weighted_mean_squared_error_group_energies(ref, pred, ddp)
+        return (
+            self.forces_weight * loss_forces
+            + self.group_energies_weight * loss_group_energies
+        )
+
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__}(forces_weight={self.forces_weight:.3f}, "
+            f"group_energies_weight={self.group_energies_weight:.3f})"
         )
 
 

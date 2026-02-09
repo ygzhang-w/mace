@@ -439,3 +439,65 @@ def save_configurations_as_HDF5(configurations: Configurations, _, h5_file) -> N
 
 def write_value(value):
     return value if value is not None else "None"
+
+
+def compute_group_energies_for_config(
+    config: Configuration,
+    r_max: float,
+    sigma: Optional[float] = None,
+) -> Optional[np.ndarray]:
+    """
+    Compute group_energies from atomic_energies for a single Configuration.
+
+    This function is used during data preprocessing to compute reference group_energies
+    labels from atomic_energies.
+
+    Args:
+        config: Configuration object containing atomic_energies in properties
+        r_max: Cutoff radius for neighborhood calculation
+        sigma: Gaussian width parameter for group_energies computation (default: r_max/3)
+
+    Returns:
+        group_energies: Per-atom group energies as numpy array [n_atoms],
+                       or None if atomic_energies is not available
+    """
+    import torch
+    from mace.data.neighborhood import get_neighborhood
+    from mace.modules.utils import compute_group_energies_from_atomic
+
+    # Check if atomic_energies is available
+    atomic_energies = config.properties.get("atomic_energies")
+    if atomic_energies is None:
+        return None
+
+    # Get neighborhood information
+    edge_index, shifts, _, _ = get_neighborhood(
+        positions=config.positions,
+        cutoff=r_max,
+        pbc=config.pbc,
+        cell=config.cell,
+    )
+
+    # Compute edge lengths
+    sender = edge_index[0]
+    receiver = edge_index[1]
+    vectors = config.positions[receiver] - config.positions[sender] + shifts
+    lengths = np.linalg.norm(vectors, axis=1)
+
+    # Convert to torch tensors
+    atomic_energies_tensor = torch.tensor(
+        atomic_energies, dtype=torch.get_default_dtype()
+    )
+    edge_index_tensor = torch.tensor(edge_index, dtype=torch.long)
+    lengths_tensor = torch.tensor(lengths, dtype=torch.get_default_dtype())
+
+    # Compute group_energies using the module function
+    group_energies_tensor = compute_group_energies_from_atomic(
+        atomic_energies=atomic_energies_tensor,
+        edge_index=edge_index_tensor,
+        lengths=lengths_tensor,
+        r_max=r_max,
+        sigma=sigma,
+    )
+
+    return group_energies_tensor.numpy()

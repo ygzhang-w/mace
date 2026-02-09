@@ -57,6 +57,14 @@ def create_error_table(
             "relative F RMSE %",
             "RMSE Ei / meV",
         ]
+    elif table_type == "PerAtomRMSE_egroup":
+        table.field_names = [
+            "config_type",
+            "RMSE E / meV / atom",
+            "RMSE F / meV / A",
+            "relative F RMSE %",
+            "RMSE Egroup / meV",
+        ]
     elif table_type == "PerAtomRMSEstressvirials":
         table.field_names = [
             "config_type",
@@ -94,6 +102,14 @@ def create_error_table(
             "MAE F / meV / A",
             "relative F MAE %",
             "MAE Ei / meV",
+        ]
+    elif table_type == "PerAtomMAE_egroup":
+        table.field_names = [
+            "config_type",
+            "MAE E / meV / atom",
+            "MAE F / meV / A",
+            "relative F MAE %",
+            "MAE Egroup / meV",
         ]
     elif table_type == "DipoleRMSE":
         table.field_names = [
@@ -179,6 +195,16 @@ def create_error_table(
                     f"{metrics['rmse_ei'] * 1000:8.1f}",
                 ]
             )
+        elif table_type == "PerAtomRMSE_egroup":
+            table.add_row(
+                [
+                    name,
+                    f"{metrics['rmse_e_per_atom'] * 1000:8.1f}",
+                    f"{metrics['rmse_f'] * 1000:8.1f}",
+                    f"{metrics['rel_rmse_f']:8.2f}",
+                    f"{metrics['rmse_egroup'] * 1000:8.1f}",
+                ]
+            )
         elif (
             table_type == "PerAtomRMSEstressvirials"
             and metrics["rmse_stress"] is not None
@@ -257,6 +283,16 @@ def create_error_table(
                     f"{metrics['mae_f'] * 1000:8.1f}",
                     f"{metrics['rel_mae_f']:8.2f}",
                     f"{metrics['mae_ei'] * 1000:8.1f}",
+                ]
+            )
+        elif table_type == "PerAtomMAE_egroup":
+            table.add_row(
+                [
+                    name,
+                    f"{metrics['mae_e_per_atom'] * 1000:8.1f}",
+                    f"{metrics['mae_f'] * 1000:8.1f}",
+                    f"{metrics['rel_mae_f']:8.2f}",
+                    f"{metrics['mae_egroup'] * 1000:8.1f}",
                 ]
             )
         elif table_type == "DipoleRMSE":

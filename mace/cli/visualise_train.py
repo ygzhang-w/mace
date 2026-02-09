@@ -69,6 +69,38 @@ error_type = {
         [("mae_e_per_atom", "MAE E/atom [meV]"), ("mae_f", "MAE F [meV / A]")],
         [("energy", "Energy per atom [eV]"), ("force", "Force [eV / A]")],
     ),
+    "PerAtomRMSE_ei": (
+        [
+            ("rmse_e_per_atom", "RMSE E/atom [meV]"),
+            ("rmse_f", "RMSE F [meV / A]"),
+            ("rmse_ei", "RMSE Ei [meV]"),
+        ],
+        [("energy", "Energy per atom [eV]"), ("force", "Force [eV / A]")],
+    ),
+    "PerAtomMAE_ei": (
+        [
+            ("mae_e_per_atom", "MAE E/atom [meV]"),
+            ("mae_f", "MAE F [meV / A]"),
+            ("mae_ei", "MAE Ei [meV]"),
+        ],
+        [("energy", "Energy per atom [eV]"), ("force", "Force [eV / A]")],
+    ),
+    "PerAtomRMSE_egroup": (
+        [
+            ("rmse_e_per_atom", "RMSE E/atom [meV]"),
+            ("rmse_f", "RMSE F [meV / A]"),
+            ("rmse_egroup", "RMSE Egroup [meV]"),
+        ],
+        [("energy", "Energy per atom [eV]"), ("force", "Force [eV / A]")],
+    ),
+    "PerAtomMAE_egroup": (
+        [
+            ("mae_e_per_atom", "MAE E/atom [meV]"),
+            ("mae_f", "MAE F [meV / A]"),
+            ("mae_egroup", "MAE Egroup [meV]"),
+        ],
+        [("energy", "Energy per atom [eV]"), ("force", "Force [eV / A]")],
+    ),
     "DipoleRMSE": (
         [
             ("rmse_mu_per_atom", "RMSE MU/atom [mDebye]"),

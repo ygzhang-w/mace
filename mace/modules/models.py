@@ -19,6 +19,7 @@ from mace.tools.torch_tools import get_change_of_basis, spherical_to_cartesian
 from .blocks import (
     AtomicEnergiesBlock,
     EquivariantProductBasisBlock,
+    GroupEnergyBlock,
     InteractionBlock,
     LinearDipolePolarReadoutBlock,
     LinearDipoleReadoutBlock,
@@ -87,6 +88,7 @@ class MACE(torch.nn.Module):
         lj_scale: float = 1.0,
         lj_coeff_matrix: Optional[torch.Tensor] = None,
         lj_trainable: bool = False,
+        compute_group_energies: bool = False,
     ):
         super().__init__()
         self.register_buffer(
@@ -197,6 +199,9 @@ class MACE(torch.nn.Module):
             radial_MLP = [64, 64, 64]
         # Interactions and readout
         self.atomic_energies_fn = AtomicEnergiesBlock(atomic_energies)
+        self.compute_group_energies = compute_group_energies
+        if compute_group_energies:
+            self.group_energy_block = GroupEnergyBlock(r_max=r_max)
         if num_interactions == 1:
             hidden_irreps_out = str(hidden_irreps[0])
         else:
@@ -429,6 +434,15 @@ class MACE(torch.nn.Module):
         node_energy = torch.sum(torch.stack(node_energies_list, dim=-1), dim=-1)
         node_feats_out = torch.cat(node_feats_concat, dim=-1)
 
+        # Compute group_energy if enabled
+        group_energy: Optional[torch.Tensor] = None
+        if self.compute_group_energies and hasattr(self, "group_energy_block"):
+            group_energy = self.group_energy_block(
+                node_energy=node_energy,
+                edge_index=data["edge_index"],
+                lengths=lengths,
+            )
+
         forces, virials, stress, hessian, edge_forces = get_outputs(
             energy=total_energy,
             positions=positions,
@@ -457,6 +471,7 @@ class MACE(torch.nn.Module):
         return {
             "energy": total_energy,
             "node_energy": node_energy,
+            "group_energy": group_energy,
             "contributions": contributions,
             "forces": forces,
             "edge_forces": edge_forces,
@@ -616,6 +631,15 @@ class ScaleShiftMACE(MACE):
         elif torch.get_default_dtype() == torch.float32:
             node_energy = node_e0.clone().float() + node_inter_es.clone().float()
 
+        # Compute group_energy if enabled
+        group_energy: Optional[torch.Tensor] = None
+        if self.compute_group_energies and hasattr(self, "group_energy_block"):
+            group_energy = self.group_energy_block(
+                node_energy=node_energy,
+                edge_index=data["edge_index"],
+                lengths=lengths,
+            )
+
         forces, virials, stress, hessian, edge_forces = get_outputs(
             energy=inter_e,
             positions=positions,
@@ -644,6 +668,7 @@ class ScaleShiftMACE(MACE):
         return {
             "energy": total_energy,
             "node_energy": node_energy,
+            "group_energy": group_energy,
             "interaction_energy": inter_e,
             "forces": forces,
             "edge_forces": edge_forces,

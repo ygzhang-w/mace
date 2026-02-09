@@ -17,6 +17,7 @@ from mace.tools.scatter import scatter_mean, scatter_std, scatter_sum
 from mace.tools.torch_geometric.batch import Batch
 
 from .blocks import AtomicEnergiesBlock
+from .radial import PolynomialCutoff
 
 
 def compute_forces(
@@ -639,3 +640,48 @@ def prepare_graph(
         node_heads=node_heads,
         interaction_kwargs=ikw,
     )
+
+
+def compute_group_energies_from_atomic(
+    atomic_energies: torch.Tensor,  # [n_atoms]
+    edge_index: torch.Tensor,  # [2, n_edges]
+    lengths: torch.Tensor,  # [n_edges]
+    r_max: float,
+    sigma: Optional[float] = None,
+    p: int = 6,
+) -> torch.Tensor:
+    """
+    Compute group_energies from atomic_energies using Gaussian-weighted sum.
+
+    This function is used for data preprocessing to compute reference group_energies
+    from atomic_energies labels.
+
+    Args:
+        atomic_energies: Per-atom energies [n_atoms]
+        edge_index: Edge indices [2, n_edges], edge_index[0] = sender, edge_index[1] = receiver
+        lengths: Edge lengths [n_edges]
+        r_max: Cutoff radius
+        sigma: Gaussian width parameter (default: r_max / 3)
+        p: Polynomial cutoff order (default: 6)
+
+    Returns:
+        group_energies: Per-atom group energies [n_atoms]
+    """
+    sigma = sigma if sigma is not None else r_max / 3.0
+    coeff = -0.5 / (sigma**2)
+
+    sender = edge_index[0]
+    receiver = edge_index[1]
+
+    # Gaussian weight + polynomial cutoff
+    gaussian_weight = torch.exp(coeff * lengths.pow(2))
+    cutoff = PolynomialCutoff.calculate_envelope(lengths, r_max, p)
+    weight = gaussian_weight * cutoff
+
+    # Weighted aggregation
+    weighted_energy = weight * atomic_energies[sender]
+    neighbor_contrib = scatter_sum(
+        weighted_energy, receiver, dim=0, dim_size=atomic_energies.size(0)
+    )
+
+    return atomic_energies + neighbor_contrib

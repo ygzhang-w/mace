@@ -117,11 +117,13 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         choices=[
             "PerAtomRMSE",
             "PerAtomRMSE_ei",
+            "PerAtomRMSE_egroup",
             "TotalRMSE",
             "PerAtomRMSEstressvirials",
             "PerAtomMAEstressvirials",
             "PerAtomMAE",
             "PerAtomMAE_ei",
+            "PerAtomMAE_egroup",
             "TotalMAE",
             "DipoleRMSE",
             "DipoleMAE",
@@ -229,6 +231,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         help="Number of distance bins for inverse frequency weighting in LJ repulsion fitting (used with --pair_repulsion_type lj_repulsion)",
         type=int,
         default=10,
+    )
+    parser.add_argument(
+        "--compute_group_energies",
+        help="compute group energy based on Gaussian-weighted sum of neighboring atomic energies",
+        action="store_true",
+        default=False,
     )
     parser.add_argument(
         "--distance_transform",
@@ -705,6 +713,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
             "weighted",
             "weighted_efei",
             "weighted_fei",
+            "weighted_fegroup",
             "forces_only",
             "virials",
             "stress",
@@ -788,6 +797,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--atomic_energies_weight",
         help="weight of atomic energy loss",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--group_energies_weight",
+        help="weight of group energy loss",
         type=float,
         default=1.0,
     )
@@ -1226,6 +1241,18 @@ def build_preprocess_arg_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         required=False,
+    )
+    parser.add_argument(
+        "--compute_group_energies",
+        help="Compute group_energies from atomic_energies during preprocessing",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "--group_energies_sigma",
+        help="Gaussian width parameter for group_energies computation (default: r_max/3)",
+        type=float,
+        default=None,
     )
     return parser
 

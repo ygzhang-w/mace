@@ -18,7 +18,7 @@ import tqdm
 
 from mace import data, tools
 from mace.data import KeySpecification, update_keyspec_from_kwargs
-from mace.data.utils import save_configurations_as_HDF5
+from mace.data.utils import save_configurations_as_HDF5, compute_group_energies_for_config
 from mace.modules import compute_statistics
 from mace.tools import torch_geometric
 from mace.tools.scripts_utils import get_atomic_energies, get_dataset_from_xyz
@@ -185,6 +185,38 @@ def run(args: argparse.Namespace):
         key_specification=args.key_specification,
         head_name="",
     )
+
+    # Compute group_energies from atomic_energies if requested
+    if args.compute_group_energies:
+        logging.info("Computing group_energies from atomic_energies")
+        computed_count = 0
+        for config in collections.train:
+            if config.properties.get("atomic_energies") is not None:
+                group_energies = compute_group_energies_for_config(
+                    config, args.r_max, args.group_energies_sigma
+                )
+                if group_energies is not None:
+                    config.properties["group_energies"] = group_energies
+                    computed_count += 1
+        for config in collections.valid:
+            if config.properties.get("atomic_energies") is not None:
+                group_energies = compute_group_energies_for_config(
+                    config, args.r_max, args.group_energies_sigma
+                )
+                if group_energies is not None:
+                    config.properties["group_energies"] = group_energies
+                    computed_count += 1
+        if collections.tests:
+            for _, subset in collections.tests:
+                for config in subset:
+                    if config.properties.get("atomic_energies") is not None:
+                        group_energies = compute_group_energies_for_config(
+                            config, args.r_max, args.group_energies_sigma
+                        )
+                        if group_energies is not None:
+                            config.properties["group_energies"] = group_energies
+                            computed_count += 1
+        logging.info(f"Computed group_energies for {computed_count} configurations")
 
     # Atomic number table
     # yapf: disable

@@ -565,6 +565,7 @@ def run(args) -> None:
             head_config=head_config,
             heads=heads,
             collection=head_config.collections.train,
+            compute_group_energies=args.compute_group_energies,
             )
             train_datasets.append(dataset)
             logging.debug(f"Successfully loaded dataset from ASE files: {ase_files}")
@@ -599,6 +600,7 @@ def run(args) -> None:
                     head_config=head_config,
                     heads=heads,
                     collection=head_config.collections.valid,
+                    compute_group_energies=args.compute_group_energies,
                 )
                 valid_datasets.append(valid_dataset)
                 logging.debug(f"Successfully loaded validation dataset from ASE files: {valid_ase_files}")
@@ -620,6 +622,20 @@ def run(args) -> None:
 
         # If no valid file is provided but collection exist, use the validation set from the collection
         if head_config.valid_file is None and head_config.collections.valid:
+            # Compute group_energies from atomic_energies if requested
+            if args.compute_group_energies:
+                from mace.data.utils import compute_group_energies_for_config
+                for config in head_config.collections.valid:
+                    if (
+                        config.properties.get("atomic_energies") is not None
+                        and config.properties.get("group_energies") is None
+                    ):
+                        group_energies = compute_group_energies_for_config(
+                            config, args.r_max, sigma=None
+                        )
+                        if group_energies is not None:
+                            config.properties["group_energies"] = group_energies
+
             valid_sets[head_config.head_name] = [
                 data.AtomicData.from_config(
                     config, z_table=z_table, cutoff=args.r_max, heads=heads

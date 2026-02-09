@@ -5,6 +5,7 @@ import torch
 from .blocks import (
     AtomicEnergiesBlock,
     EquivariantProductBasisBlock,
+    GroupEnergyBlock,
     InteractionBlock,
     LinearDipolePolarReadoutBlock,
     LinearDipoleReadoutBlock,
@@ -35,8 +36,10 @@ from .loss import (
     WeightedEnergyForcesStressLoss,
     WeightedEnergyForcesVirialsLoss,
     WeightedForcesAtomicEnergiesLoss,
+    WeightedForcesGroupEnergiesLoss,
     WeightedForcesLoss,
     WeightedHuberEnergyForcesStressLoss,
+    weighted_mean_squared_error_group_energies,
 )
 from .models import (
     MACE,
@@ -52,6 +55,7 @@ from .utils import (
     compute_dielectric_gradients,
     compute_fixed_charge_dipole,
     compute_fixed_charge_dipole_polar,
+    compute_group_energies_from_atomic,
     compute_mean_rms_energy_forces,
     compute_mean_std_atomic_inter_energy,
     compute_rms_dipoles,
@@ -90,6 +94,7 @@ gate_dict: Dict[str, Optional[Callable]] = {
 
 __all__ = [
     "AtomicEnergiesBlock",
+    "GroupEnergyBlock",
     "RadialEmbeddingBlock",
     "ZBLBasis",
     "LinearNodeEmbeddingBlock",
@@ -117,6 +122,8 @@ __all__ = [
     "WeightedEnergyForcesStressLoss",
     "WeightedEnergyForcesAtomicEnergiesLoss",
     "WeightedForcesAtomicEnergiesLoss",
+    "WeightedForcesGroupEnergiesLoss",
+    "weighted_mean_squared_error_group_energies",
     "DipoleSingleLoss",
     "WeightedEnergyForcesDipoleLoss",
     "WeightedHuberEnergyForcesStressLoss",
@@ -130,4 +137,5 @@ __all__ = [
     "compute_fixed_charge_dipole",
     "compute_fixed_charge_dipole_polar",
     "compute_dielectric_gradients",
+    "compute_group_energies_from_atomic",
 ]

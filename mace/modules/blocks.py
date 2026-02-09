@@ -332,6 +332,57 @@ class AtomicEnergiesBlock(torch.nn.Module):
 
 
 @compile_mode("script")
+class GroupEnergyBlock(torch.nn.Module):
+    """
+    Compute group_energy: Gaussian-weighted sum of neighboring atomic_energies.
+
+    group_energy_i = E_i + sum_j(w_ij * E_j)
+    where w_ij = exp(-0.5 * (r_ij / sigma)^2) * cutoff(r_ij)
+    """
+
+    def __init__(self, r_max: float, sigma: Optional[float] = None, p: int = 6):
+        super().__init__()
+        self.sigma = sigma if sigma is not None else r_max / 3.0
+        self.coeff = -0.5 / (self.sigma**2)
+        self.register_buffer("r_max", torch.tensor(r_max, dtype=torch.get_default_dtype()))
+        self.register_buffer("p", torch.tensor(p, dtype=torch.int64))
+
+    def forward(
+        self,
+        node_energy: torch.Tensor,  # [n_atoms]
+        edge_index: torch.Tensor,  # [2, n_edges]
+        lengths: torch.Tensor,  # [n_edges] or [n_edges, 1]
+    ) -> torch.Tensor:
+        sender = edge_index[0]  # Source atom indices
+        receiver = edge_index[1]  # Target atom indices (center atoms)
+
+        # Ensure lengths is 1D
+        if lengths.dim() > 1:
+            lengths = lengths.squeeze(-1)
+
+        # 1. Compute Gaussian weights
+        gaussian_weight = torch.exp(self.coeff * lengths.pow(2))
+
+        # 2. Apply polynomial cutoff function
+        cutoff = PolynomialCutoff.calculate_envelope(lengths, self.r_max, self.p)
+        weight = gaussian_weight * cutoff
+
+        # 3. Get weighted neighbor energies (from sender)
+        weighted_energy = weight * node_energy[sender]
+
+        # 4. Aggregate to receiver (center atoms)
+        neighbor_contrib = scatter_sum(
+            weighted_energy, receiver, dim=0, dim_size=node_energy.size(0)
+        )
+
+        # 5. Center atom's own energy + neighbor contributions
+        return node_energy + neighbor_contrib
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(r_max={self.r_max.item():.3f}, sigma={self.sigma:.3f})"
+
+
+@compile_mode("script")
 class RadialEmbeddingBlock(torch.nn.Module):
     def __init__(
         self,

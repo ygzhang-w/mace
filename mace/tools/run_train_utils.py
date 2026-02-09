@@ -7,6 +7,7 @@ import torch
 from torch.utils.data import ConcatDataset
 
 from mace import data
+from mace.data.utils import compute_group_energies_for_config
 from mace.tools.scripts_utils import check_path_ase_read
 from mace.tools.torch_geometric.dataset import Dataset
 from mace.tools.utils import AtomicNumberTable
@@ -36,6 +37,7 @@ def load_dataset_for_path(
     heads: List[str],
     head_config: Any,
     collection: Optional[Any] = None,
+    compute_group_energies: bool = False,
 ) -> Union[Dataset, List]:
     """
     Load a dataset from a file path based on its format.
@@ -46,7 +48,8 @@ def load_dataset_for_path(
         z_table: Atomic number table
         heads: List of head names
         head_name: Current head name
-        **kwargs: Additional arguments
+        collection: Collection of configurations for ASE readable files
+        compute_group_energies: If True, compute group_energies from atomic_energies
 
     Returns:
         Loaded dataset
@@ -67,6 +70,26 @@ def load_dataset_for_path(
         assert (
             collection is not None
         ), "Collection must be provided for ASE readable files"
+
+        # Compute group_energies from atomic_energies if requested
+        if compute_group_energies:
+            computed_count = 0
+            for config in collection:
+                if (
+                    config.properties.get("atomic_energies") is not None
+                    and config.properties.get("group_energies") is None
+                ):
+                    group_energies = compute_group_energies_for_config(
+                        config, r_max, sigma=None
+                    )
+                    if group_energies is not None:
+                        config.properties["group_energies"] = group_energies
+                        computed_count += 1
+            if computed_count > 0:
+                logging.info(
+                    f"Computed group_energies from atomic_energies for {computed_count} configurations"
+                )
+
         return [
             data.AtomicData.from_config(
                 config, z_table=z_table, cutoff=r_max, heads=heads

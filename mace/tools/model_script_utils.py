@@ -292,6 +292,7 @@ def _build_model(
             lj_scale=args.lj_scale,
             lj_coeff_matrix=lj_coeff_matrix,
             lj_trainable=args.lj_trainable,
+            compute_group_energies=args.compute_group_energies,
         )
     if args.model == "ScaleShiftMACE":
         return modules.ScaleShiftMACE(
@@ -319,6 +320,7 @@ def _build_model(
             lj_scale=args.lj_scale,
             lj_coeff_matrix=lj_coeff_matrix,
             lj_trainable=args.lj_trainable,
+            compute_group_energies=args.compute_group_energies,
         )
     if args.model == "FoundationMACE":
         return modules.ScaleShiftMACE(**model_config_foundation)
@@ -409,5 +411,6 @@ def _build_model(
             use_agnostic_product=args.use_agnostic_product,
             pair_r_max=pair_r_max,
             zbl_scale=args.zbl_scale,
+            compute_group_energies=args.compute_group_energies,
         )
     raise RuntimeError(f"Unknown model: '{args.model}'")

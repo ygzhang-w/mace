@@ -42,6 +42,102 @@ def fixture_sample_configs():
     return configs
 
 
+@pytest.fixture(name="sample_configs_with_atomic_energies")
+def fixture_sample_configs_with_atomic_energies():
+    """Sample configs with atomic_energies for group_energies computation test."""
+    water = Atoms(
+        numbers=[8, 1, 1],
+        positions=[[0, -2.0, 0], [1, 0, 0], [0, 1, 0]],
+        cell=[4] * 3,
+        pbc=[True] * 3,
+    )
+    configs = [
+        Atoms(numbers=[8], positions=[[0, 0, 0]], cell=[6] * 3),
+        Atoms(numbers=[1], positions=[[0, 0, 0]], cell=[6] * 3),
+    ]
+    configs[0].info["REF_energy"] = 0.0
+    configs[0].info["config_type"] = "IsolatedAtom"
+    configs[1].info["REF_energy"] = 0.0
+    configs[1].info["config_type"] = "IsolatedAtom"
+
+    np.random.seed(42)
+    for _ in range(10):
+        c = water.copy()
+        c.positions += np.random.normal(0.1, size=c.positions.shape)
+        c.info["REF_energy"] = np.random.normal(0.1)
+        c.new_array("REF_forces", np.random.normal(0.1, size=c.positions.shape))
+        # Add atomic_energies for each atom
+        c.new_array("REF_atomic_energies", np.random.normal(0.0, 0.5, size=len(c)))
+        configs.append(c)
+
+    return configs
+
+
+def test_preprocess_compute_group_energies(tmp_path, sample_configs_with_atomic_energies):
+    """Test that --compute_group_energies computes and saves group_energies to HDF5."""
+    import h5py
+
+    ase.io.write(tmp_path / "sample.xyz", sample_configs_with_atomic_energies)
+
+    preprocess_params = {
+        "train_file": tmp_path / "sample.xyz",
+        "r_max": 5.0,
+        "config_type_weights": "{'Default':1.0}",
+        "num_process": 2,
+        "valid_fraction": 0.1,
+        "h5_prefix": tmp_path / "preprocessed_",
+        "seed": 42,
+        "energy_key": "REF_energy",
+        "forces_key": "REF_forces",
+        "atomic_energies_key": "REF_atomic_energies",
+        "compute_group_energies": None,  # flag with no value
+    }
+
+    run_env = os.environ.copy()
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    run_env["PYTHONPATH"] = ":".join(sys.path)
+
+    cmd = (
+        sys.executable
+        + " "
+        + str(preprocess_data)
+        + " "
+        + " ".join(
+            [
+                (f"--{k}={v}" if v is not None else f"--{k}")
+                for k, v in preprocess_params.items()
+            ]
+        )
+    )
+
+    p = subprocess.run(cmd.split(), env=run_env, check=True)
+    assert p.returncode == 0
+
+    # Check that group_energies is present in HDF5 files
+    train_files = list((tmp_path / "preprocessed_train").glob("*.h5"))
+    assert len(train_files) > 0
+
+    group_energies_found = False
+    for train_file in train_files:
+        with h5py.File(train_file, "r") as f:
+            for _, batch in f.items():
+                for config_key in batch.keys():
+                    config = batch[config_key]
+                    if "group_energies" in config["properties"]:
+                        group_energies_found = True
+                        group_energies = config["properties"]["group_energies"][()]
+                        # Check that group_energies has correct shape (n_atoms,)
+                        atomic_numbers = config["atomic_numbers"][()]
+                        assert len(group_energies) == len(atomic_numbers)
+                        # group_energies should be different from atomic_energies
+                        # (due to neighbor contributions)
+                        atomic_energies = config["properties"]["atomic_energies"][()]
+                        assert atomic_energies is not None
+
+    assert group_energies_found, "group_energies not found in any HDF5 file"
+    print("test_preprocess_compute_group_energies passed!")
+
+
 def test_preprocess_data(tmp_path, sample_configs):
     ase.io.write(tmp_path / "sample.xyz", sample_configs)
 

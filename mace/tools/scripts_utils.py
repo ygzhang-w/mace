@@ -768,6 +768,11 @@ def get_loss_fn(
             forces_weight=args.forces_weight,
             atomic_energies_weight=args.atomic_energies_weight,
         )
+    elif args.loss == "weighted_fegroup":
+        loss_fn = modules.WeightedForcesGroupEnergiesLoss(
+            forces_weight=args.forces_weight,
+            group_energies_weight=args.group_energies_weight,
+        )
     elif args.loss == "forces_only":
         loss_fn = modules.WeightedForcesLoss(forces_weight=args.forces_weight)
     elif args.loss == "virials":

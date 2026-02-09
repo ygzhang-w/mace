@@ -161,6 +161,22 @@ def valid_err_log(
             error_ei = eval_metrics["mae_ei"] * 1e3
             log_msg += f", MAE_Ei={error_ei:8.2f} meV"
         logging.info(log_msg)
+    elif log_errors == "PerAtomRMSE_egroup":
+        error_e = eval_metrics["rmse_e_per_atom"] * 1e3
+        error_f = eval_metrics["rmse_f"] * 1e3
+        log_msg = f"{inintial_phrase}: head: {valid_loader_name}, loss={valid_loss:8.8f}, RMSE_E_per_atom={error_e:8.2f} meV, RMSE_F={error_f:8.2f} meV / A"
+        if eval_metrics.get("rmse_egroup") is not None:
+            error_egroup = eval_metrics["rmse_egroup"] * 1e3
+            log_msg += f", RMSE_Egroup={error_egroup:8.2f} meV"
+        logging.info(log_msg)
+    elif log_errors == "PerAtomMAE_egroup":
+        error_e = eval_metrics["mae_e_per_atom"] * 1e3
+        error_f = eval_metrics["mae_f"] * 1e3
+        log_msg = f"{inintial_phrase}: head: {valid_loader_name}, loss={valid_loss:8.8f}, MAE_E_per_atom={error_e:8.2f} meV, MAE_F={error_f:8.2f} meV / A"
+        if eval_metrics.get("mae_egroup") is not None:
+            error_egroup = eval_metrics["mae_egroup"] * 1e3
+            log_msg += f", MAE_Egroup={error_egroup:8.2f} meV"
+        logging.info(log_msg)
 
 
 def enable_running_stats(model: torch.nn.Module):
@@ -770,6 +786,9 @@ class MACELoss(Metric):
         self.add_state("eis", default=[], dist_reduce_fx="cat")
         self.add_state("delta_eis", default=[], dist_reduce_fx="cat")
         self.add_state("atomic_energies_computed", default=torch.tensor(0.0), dist_reduce_fx="sum")
+        self.add_state("egroups", default=[], dist_reduce_fx="cat")
+        self.add_state("delta_egroups", default=[], dist_reduce_fx="cat")
+        self.add_state("group_energies_computed", default=torch.tensor(0.0), dist_reduce_fx="sum")
 
     def update(self, batch, output):  # pylint: disable=arguments-differ
         loss = self.loss_fn(pred=output, ref=batch)
@@ -845,6 +864,12 @@ class MACELoss(Metric):
             self.delta_eis.append(batch.atomic_energies - output["node_energy"].unsqueeze(-1))
             self.atomic_energies_computed += filter_nonzero_weight(
                 batch, self.delta_eis, batch.weight, batch.atomic_energies_weight, spread_atoms=True
+            )
+        if output.get("group_energy") is not None and batch.group_energies is not None:
+            self.egroups.append(batch.group_energies)
+            self.delta_egroups.append(batch.group_energies - output["group_energy"].unsqueeze(-1))
+            self.group_energies_computed += filter_nonzero_weight(
+                batch, self.delta_egroups, batch.weight, batch.group_energies_weight, spread_atoms=True
             )
 
     def convert(self, delta: Union[torch.Tensor, List[torch.Tensor]]) -> np.ndarray:
@@ -928,38 +953,11 @@ class MACELoss(Metric):
             delta_eis = self.convert(self.delta_eis)
             aux["mae_ei"] = compute_mae(delta_eis)
             aux["rmse_ei"] = compute_rmse(delta_eis)
-
-        return aux["loss"], aux
-        if self.Mus_computed:
-            mus = self.convert(self.mus)
-            delta_mus = self.convert(self.delta_mus)
-            delta_mus_per_atom = self.convert(self.delta_mus_per_atom)
-            aux["mae_mu"] = compute_mae(delta_mus)
-            aux["mae_mu_per_atom"] = compute_mae(delta_mus_per_atom)
-            aux["rel_mae_mu"] = compute_rel_mae(delta_mus, mus)
-            aux["rmse_mu"] = compute_rmse(delta_mus)
-            aux["rmse_mu_per_atom"] = compute_rmse(delta_mus_per_atom)
-            aux["rel_rmse_mu"] = compute_rel_rmse(delta_mus, mus)
-            aux["q95_mu"] = compute_q95(delta_mus)
-        if self.polarizability_computed:
-            delta_polarizability = self.convert(self.delta_polarizability)
-            delta_polarizability_per_atom = self.convert(
-                self.delta_polarizability_per_atom
-            )
-            aux["mae_polarizability"] = compute_mae(delta_polarizability)
-            aux["mae_polarizability_per_atom"] = compute_mae(
-                delta_polarizability_per_atom
-            )
-            aux["rmse_polarizability"] = compute_rmse(delta_polarizability)
-            aux["rmse_polarizability_per_atom"] = compute_rmse(
-                delta_polarizability_per_atom
-            )
-            aux["q95_polarizability"] = compute_q95(delta_polarizability)
-        # Atomic energies
-        if self.atomic_energies_computed:
-            eis = self.convert(self.eis)
-            delta_eis = self.convert(self.delta_eis)
-            aux["mae_ei"] = compute_mae(delta_eis)
-            aux["rmse_ei"] = compute_rmse(delta_eis)
+        # Group energies
+        if self.group_energies_computed:
+            egroups = self.convert(self.egroups)
+            delta_egroups = self.convert(self.delta_egroups)
+            aux["mae_egroup"] = compute_mae(delta_egroups)
+            aux["rmse_egroup"] = compute_rmse(delta_egroups)
 
         return aux["loss"], aux

@@ -88,6 +88,12 @@ def configure_model(
         logging.info("Loading FOUNDATION model")
         model_config_foundation = extract_config_mace_model(model_foundation)
         model_config_foundation["atomic_energies"] = atomic_energies
+        
+        # Add compute_group_energies from args if it's enabled
+        # This ensures the new model will have group_energy_block even if foundation model doesn't
+        if args.compute_group_energies:
+            model_config_foundation["compute_group_energies"] = True
+            logging.info("Enabling compute_group_energies for fine-tuned model")
 
         if args.foundation_model_elements:
             foundation_z_table = AtomicNumberTable(

@@ -436,7 +436,7 @@ class MACE(torch.nn.Module):
 
         # Compute group_energy if enabled
         group_energy: Optional[torch.Tensor] = None
-        if self.compute_group_energies and hasattr(self, "group_energy_block"):
+        if getattr(self, "compute_group_energies", False) and hasattr(self, "group_energy_block"):
             group_energy = self.group_energy_block(
                 node_energy=node_energy,
                 edge_index=data["edge_index"],
@@ -633,7 +633,7 @@ class ScaleShiftMACE(MACE):
 
         # Compute group_energy if enabled
         group_energy: Optional[torch.Tensor] = None
-        if self.compute_group_energies and hasattr(self, "group_energy_block"):
+        if getattr(self, "compute_group_energies", False) and hasattr(self, "group_energy_block"):
             group_energy = self.group_energy_block(
                 node_energy=node_energy,
                 edge_index=data["edge_index"],

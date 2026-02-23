@@ -87,7 +87,7 @@ class MACE(torch.nn.Module):
         lj_sigma: float = 3.0,
         lj_scale: float = 1.0,
         lj_trainable: bool = False,
-        lj_repulsion_c: float = 1.0,
+        lj_c_matrix: Optional[torch.Tensor] = None,
         lj_bias_matrix: Optional[torch.Tensor] = None,
         lj_rcut_matrix: Optional[torch.Tensor] = None,
         lj_rcut_epsilon: float = 0.01,
@@ -173,7 +173,7 @@ class MACE(torch.nn.Module):
             elif pair_repulsion_type == "lj_repulsion":
                 self.pair_repulsion_fn = LJRepulsionBasis(
                     num_elements=num_elements,
-                    repulsion_c=lj_repulsion_c,
+                    c_matrix=lj_c_matrix,
                     bias_matrix=lj_bias_matrix,
                     trainable=lj_trainable,
                 )
@@ -387,10 +387,10 @@ class MACE(torch.nn.Module):
             mace_lengths = lengths[mace_mask]
             mace_vectors = vectors[mace_mask]
 
-            # Repulsion sees edges with r < lj_rcut (strict)
-            rep_mask = lengths_1d < edge_lj_rcut
-            rep_edge_index = data["edge_index"][:, rep_mask]
-            rep_lengths = lengths[rep_mask]
+            # Repulsion sees all edges (full r < r_max neighbor list)
+            rep_edge_index = data["edge_index"]
+            rep_lengths = lengths
+            rep_mask = torch.ones(lengths_1d.shape[0], dtype=torch.bool, device=lengths.device)
         else:
             mace_edge_index = data["edge_index"]
             mace_lengths = lengths
@@ -620,10 +620,10 @@ class ScaleShiftMACE(MACE):
             mace_lengths = lengths[mace_mask]
             mace_vectors = vectors[mace_mask]
 
-            # Repulsion sees edges with r < lj_rcut (strict)
-            rep_mask = lengths_1d < edge_lj_rcut
-            rep_edge_index = data["edge_index"][:, rep_mask]
-            rep_lengths = lengths[rep_mask]
+            # Repulsion sees all edges (full r < r_max neighbor list)
+            rep_edge_index = data["edge_index"]
+            rep_lengths = lengths
+            rep_mask = torch.ones(lengths_1d.shape[0], dtype=torch.bool, device=lengths.device)
         else:
             mace_edge_index = data["edge_index"]
             mace_lengths = lengths

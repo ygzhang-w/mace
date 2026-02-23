@@ -989,28 +989,34 @@ def run(args) -> None:
         else:
             logging.info(f"Loaded Stage one model from epoch {epoch} for evaluation")
 
-        # Post-training: Fit LJ repulsion bias if lj_repulsion is enabled
+        # Post-training: Fit LJ repulsion via ridge regression
         if args.pair_repulsion and args.pair_repulsion_type == "lj_repulsion":
-            from mace.tools.lj_fitting import fit_lj_repulsion_bias
+            from mace.tools.lj_fitting import LJRidgeFitter, compute_lj_rcut_matrix
 
-            logging.info("Post-training: Fitting LJ repulsion bias...")
-            rcut_matrix, bias_matrix, lj_diagnostics = fit_lj_repulsion_bias(
-                model=model,
+            logging.info("Post-training: Fitting LJ repulsion via ridge regression...")
+            atomic_energies_np = model.atomic_energies_fn.atomic_energies.cpu().numpy()
+            c_matrix, bias_matrix, lj_diagnostics = LJRidgeFitter.fit_lj_coefficients(
                 data_loader=train_loader,
                 z_table=z_table,
-                repulsion_c=args.lj_repulsion_c,
-                device=device,
+                atomic_energies=atomic_energies_np,
+                alpha=args.lj_ridge_alpha,
+                r_max=args.r_max,
             )
 
+            # Compute rcut matrix for MACE-side region split
+            rcut_matrix = compute_lj_rcut_matrix(train_loader, z_table)
+
             # Update model with fitted values
-            model.lj_rcut_matrix.copy_(rcut_matrix.to(device))
+            model.pair_repulsion_fn.c_matrix.copy_(c_matrix.to(device))
             model.pair_repulsion_fn.bias_matrix.copy_(bias_matrix.to(device))
+            model.lj_rcut_matrix.copy_(rcut_matrix.to(device))
             model.has_lj_rcut = True
 
-            logging.info(f"LJ rcut matrix:\n{rcut_matrix}")
-            logging.info(f"LJ bias matrix:\n{bias_matrix}")
+            logging.info(f"LJ c_matrix:\n{c_matrix}")
+            logging.info(f"LJ bias_matrix:\n{bias_matrix}")
+            logging.info(f"LJ rcut_matrix:\n{rcut_matrix}")
             logging.info(
-                f"Pairs found: {lj_diagnostics['num_pairs_with_data']}/{lj_diagnostics['num_pairs_total']}"
+                f"Ridge regression R²: {lj_diagnostics['r2']:.4f}, MSE: {lj_diagnostics['mse']:.6f}"
             )
 
         if rank == 0:

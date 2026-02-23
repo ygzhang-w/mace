@@ -215,12 +215,6 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=1.0,
     )
     parser.add_argument(
-        "--lj_repulsion_c",
-        help="Unified repulsion constant for LJ repulsion (used with --pair_repulsion_type lj_repulsion)",
-        type=float,
-        default=1.0,
-    )
-    parser.add_argument(
         "--lj_trainable",
         help="Whether LJ bias is trainable during MACE training (used with --pair_repulsion_type lj_repulsion)",
         action="store_true",
@@ -231,6 +225,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         help="Numerical safety margin for neighbor list filtering at lj_rcut boundary (used with --pair_repulsion_type lj_repulsion)",
         type=float,
         default=0.01,
+    )
+    parser.add_argument(
+        "--lj_ridge_alpha",
+        help="Ridge regression regularization parameter for LJ repulsion fitting",
+        type=float,
+        default=1.0,
     )
     parser.add_argument(
         "--compute_group_energies",

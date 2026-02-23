@@ -215,22 +215,22 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=1.0,
     )
     parser.add_argument(
-        "--lj_ridge_alpha",
-        help="Ridge regression regularization parameter for LJ repulsion fitting (used with --pair_repulsion_type lj_repulsion)",
+        "--lj_repulsion_c",
+        help="Unified repulsion constant for LJ repulsion (used with --pair_repulsion_type lj_repulsion)",
         type=float,
         default=1.0,
     )
     parser.add_argument(
         "--lj_trainable",
-        help="Whether LJ coefficients are trainable during MACE training (used with --pair_repulsion_type lj_repulsion)",
+        help="Whether LJ bias is trainable during MACE training (used with --pair_repulsion_type lj_repulsion)",
         action="store_true",
         default=False,
     )
     parser.add_argument(
-        "--num_distance_bins",
-        help="Number of distance bins for inverse frequency weighting in LJ repulsion fitting (used with --pair_repulsion_type lj_repulsion)",
-        type=int,
-        default=10,
+        "--lj_rcut_epsilon",
+        help="Numerical safety margin for neighbor list filtering at lj_rcut boundary (used with --pair_repulsion_type lj_repulsion)",
+        type=float,
+        default=0.01,
     )
     parser.add_argument(
         "--compute_group_energies",

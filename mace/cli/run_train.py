@@ -989,6 +989,30 @@ def run(args) -> None:
         else:
             logging.info(f"Loaded Stage one model from epoch {epoch} for evaluation")
 
+        # Post-training: Fit LJ repulsion bias if lj_repulsion is enabled
+        if args.pair_repulsion and args.pair_repulsion_type == "lj_repulsion":
+            from mace.tools.lj_fitting import fit_lj_repulsion_bias
+
+            logging.info("Post-training: Fitting LJ repulsion bias...")
+            rcut_matrix, bias_matrix, lj_diagnostics = fit_lj_repulsion_bias(
+                model=model,
+                data_loader=train_loader,
+                z_table=z_table,
+                repulsion_c=args.lj_repulsion_c,
+                device=device,
+            )
+
+            # Update model with fitted values
+            model.lj_rcut_matrix.copy_(rcut_matrix.to(device))
+            model.pair_repulsion_fn.bias_matrix.copy_(bias_matrix.to(device))
+            model.has_lj_rcut = True
+
+            logging.info(f"LJ rcut matrix:\n{rcut_matrix}")
+            logging.info(f"LJ bias matrix:\n{bias_matrix}")
+            logging.info(
+                f"Pairs found: {lj_diagnostics['num_pairs_with_data']}/{lj_diagnostics['num_pairs_total']}"
+            )
+
         if rank == 0:
             # Save entire model
             if swa_eval:

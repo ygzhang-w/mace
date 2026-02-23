@@ -86,8 +86,11 @@ class MACE(torch.nn.Module):
         lj_epsilon: float = 0.01,
         lj_sigma: float = 3.0,
         lj_scale: float = 1.0,
-        lj_coeff_matrix: Optional[torch.Tensor] = None,
         lj_trainable: bool = False,
+        lj_repulsion_c: float = 1.0,
+        lj_bias_matrix: Optional[torch.Tensor] = None,
+        lj_rcut_matrix: Optional[torch.Tensor] = None,
+        lj_rcut_epsilon: float = 0.01,
         compute_group_energies: bool = False,
     ):
         super().__init__()
@@ -147,6 +150,13 @@ class MACE(torch.nn.Module):
             apply_cutoff=apply_cutoff,
         )
         edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
+        # Always register lj_rcut fields for TorchScript compatibility
+        self.has_lj_rcut: bool = False
+        self.lj_rcut_epsilon: float = lj_rcut_epsilon
+        self.register_buffer(
+            "lj_rcut_matrix",
+            torch.zeros(num_elements, num_elements, dtype=torch.get_default_dtype()),
+        )
         if pair_repulsion:
             if pair_repulsion_type == "zbl":
                 self.pair_repulsion_fn = ZBLBasis(
@@ -161,16 +171,15 @@ class MACE(torch.nn.Module):
                     lj_scale=lj_scale,
                 )
             elif pair_repulsion_type == "lj_repulsion":
-                if lj_coeff_matrix is None:
-                    # Default initialization with small positive values
-                    lj_coeff_matrix = torch.ones(
-                        num_elements, num_elements, dtype=torch.get_default_dtype()
-                    ) * 0.01
                 self.pair_repulsion_fn = LJRepulsionBasis(
                     num_elements=num_elements,
-                    coeff_matrix=lj_coeff_matrix,
+                    repulsion_c=lj_repulsion_c,
+                    bias_matrix=lj_bias_matrix,
                     trainable=lj_trainable,
                 )
+                if lj_rcut_matrix is not None:
+                    self.lj_rcut_matrix = lj_rcut_matrix
+                    self.has_lj_rcut = True
             else:
                 raise ValueError(f"Unknown pair_repulsion_type: {pair_repulsion_type}")
             self.pair_repulsion = True
@@ -352,16 +361,59 @@ class MACE(torch.nn.Module):
         ).to(
             vectors.dtype
         )  # [n_graphs, n_heads]
+
+        # --- Neighbor list split for lj_repulsion ---
+        use_lj_split = (
+            self.has_lj_rcut
+            and hasattr(self, "pair_repulsion")
+            and not self.training
+        )
+
+        # Initialize repulsion edge variables (needed for TorchScript)
+        rep_mask = torch.zeros(lengths.shape[0], dtype=torch.bool, device=lengths.device)
+        rep_edge_index = data["edge_index"]
+        rep_lengths = lengths
+
+        if use_lj_split:
+            element_indices = torch.argmax(data["node_attrs"], dim=1)
+            sender_z_all = element_indices[data["edge_index"][0]]
+            receiver_z_all = element_indices[data["edge_index"][1]]
+            lengths_1d = lengths.squeeze(-1) if lengths.dim() > 1 else lengths
+            edge_lj_rcut = self.lj_rcut_matrix[sender_z_all, receiver_z_all]
+
+            # MACE sees edges with r >= lj_rcut - epsilon
+            mace_mask = lengths_1d >= (edge_lj_rcut - self.lj_rcut_epsilon)
+            mace_edge_index = data["edge_index"][:, mace_mask]
+            mace_lengths = lengths[mace_mask]
+            mace_vectors = vectors[mace_mask]
+
+            # Repulsion sees edges with r < lj_rcut (strict)
+            rep_mask = lengths_1d < edge_lj_rcut
+            rep_edge_index = data["edge_index"][:, rep_mask]
+            rep_lengths = lengths[rep_mask]
+        else:
+            mace_edge_index = data["edge_index"]
+            mace_lengths = lengths
+            mace_vectors = vectors
+
         # Embeddings
         node_feats = self.node_embedding(data["node_attrs"])
-        edge_attrs = self.spherical_harmonics(vectors)
+        edge_attrs = self.spherical_harmonics(mace_vectors)
         edge_feats, cutoff = self.radial_embedding(
-            lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
+            mace_lengths, data["node_attrs"], mace_edge_index, self.atomic_numbers
         )
         if hasattr(self, "pair_repulsion"):
-            pair_node_energy = self.pair_repulsion_fn(
-                lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
-            )
+            if use_lj_split:
+                if rep_mask.any():
+                    pair_node_energy = self.pair_repulsion_fn(
+                        rep_lengths, data["node_attrs"], rep_edge_index, self.atomic_numbers
+                    )
+                else:
+                    pair_node_energy = torch.zeros_like(node_e0)
+            else:
+                pair_node_energy = self.pair_repulsion_fn(
+                    lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
+                )
             if is_lammps:
                 pair_node_energy = pair_node_energy[: lammps_natoms[0]]
             pair_energy = scatter_sum(
@@ -407,7 +459,7 @@ class MACE(torch.nn.Module):
                 node_feats=node_feats,
                 edge_attrs=edge_attrs,
                 edge_feats=edge_feats,
-                edge_index=data["edge_index"],
+                edge_index=mace_edge_index,
                 cutoff=cutoff,
                 first_layer=(i == 0),
                 lammps_class=lammps_class,
@@ -543,17 +595,59 @@ class ScaleShiftMACE(MACE):
             vectors.dtype
         )  # [n_graphs, num_heads]
 
+        # --- Neighbor list split for lj_repulsion ---
+        use_lj_split = (
+            self.has_lj_rcut
+            and hasattr(self, "pair_repulsion")
+            and not self.training
+        )
+
+        # Initialize repulsion edge variables (needed for TorchScript)
+        rep_mask = torch.zeros(lengths.shape[0], dtype=torch.bool, device=lengths.device)
+        rep_edge_index = data["edge_index"]
+        rep_lengths = lengths
+
+        if use_lj_split:
+            element_indices = torch.argmax(data["node_attrs"], dim=1)
+            sender_z_all = element_indices[data["edge_index"][0]]
+            receiver_z_all = element_indices[data["edge_index"][1]]
+            lengths_1d = lengths.squeeze(-1) if lengths.dim() > 1 else lengths
+            edge_lj_rcut = self.lj_rcut_matrix[sender_z_all, receiver_z_all]
+
+            # MACE sees edges with r >= lj_rcut - epsilon
+            mace_mask = lengths_1d >= (edge_lj_rcut - self.lj_rcut_epsilon)
+            mace_edge_index = data["edge_index"][:, mace_mask]
+            mace_lengths = lengths[mace_mask]
+            mace_vectors = vectors[mace_mask]
+
+            # Repulsion sees edges with r < lj_rcut (strict)
+            rep_mask = lengths_1d < edge_lj_rcut
+            rep_edge_index = data["edge_index"][:, rep_mask]
+            rep_lengths = lengths[rep_mask]
+        else:
+            mace_edge_index = data["edge_index"]
+            mace_lengths = lengths
+            mace_vectors = vectors
+
         # Embeddings
         node_feats = self.node_embedding(data["node_attrs"])
-        edge_attrs = self.spherical_harmonics(vectors)
+        edge_attrs = self.spherical_harmonics(mace_vectors)
         edge_feats, cutoff = self.radial_embedding(
-            lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
+            mace_lengths, data["node_attrs"], mace_edge_index, self.atomic_numbers
         )
 
         if hasattr(self, "pair_repulsion"):
-            pair_node_energy = self.pair_repulsion_fn(
-                lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
-            )
+            if use_lj_split:
+                if rep_mask.any():
+                    pair_node_energy = self.pair_repulsion_fn(
+                        rep_lengths, data["node_attrs"], rep_edge_index, self.atomic_numbers
+                    )
+                else:
+                    pair_node_energy = torch.zeros_like(node_e0)
+            else:
+                pair_node_energy = self.pair_repulsion_fn(
+                    lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
+                )
             if is_lammps:
                 pair_node_energy = pair_node_energy[: lammps_natoms[0]]
         else:
@@ -597,7 +691,7 @@ class ScaleShiftMACE(MACE):
                 node_feats=node_feats,
                 edge_attrs=edge_attrs,
                 edge_feats=edge_feats,
-                edge_index=data["edge_index"],
+                edge_index=mace_edge_index,
                 cutoff=cutoff,
                 first_layer=(i == 0),
                 lammps_class=lammps_class,

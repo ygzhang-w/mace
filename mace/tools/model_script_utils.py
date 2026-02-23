@@ -210,31 +210,8 @@ def configure_model(
         pair_r_max = create_pair_r_max_tensor(min_pair_distances)
         logging.info(f"Using computed pair distances for {args.pair_repulsion_type.upper()} r_max")
 
-    # Pre-training: Fit LJ repulsion coefficients via ridge regression
-    lj_coeff_matrix = None
-    if args.pair_repulsion and args.pair_repulsion_type == "lj_repulsion":
-        logging.info("Pre-training: Fitting LJ repulsion coefficients via ridge regression...")
-        from mace.tools.lj_fitting import LJRidgeFitter
-
-        lj_coeff_matrix, diagnostics = LJRidgeFitter.fit_lj_coefficients(
-            data_loader=train_loader,
-            z_table=z_table,
-            atomic_energies=atomic_energies,
-            alpha=args.lj_ridge_alpha,
-            energy_weight=args.energy_weight,
-            forces_weight=args.forces_weight,
-            compute_forces=args.compute_forces,
-            r_max=args.r_max,
-            num_distance_bins=args.num_distance_bins,
-        )
-
-        logging.info(f"LJ fitting R²: {diagnostics['r2']:.4f}")
-        logging.info(f"LJ fitting MSE: {diagnostics['mse']:.6f}")
-        logging.info(f"Number of energy samples: {diagnostics['num_energy_samples']}")
-        logging.info(f"Number of force samples: {diagnostics['num_force_samples']}")
-        logging.info(f"LJ coefficient matrix:\n{lj_coeff_matrix}")
-
-    model = _build_model(args, model_config, model_config_foundation, heads, pair_r_max, lj_coeff_matrix)
+    # LJ repulsion uses post-training bias fitting (handled after training loop)
+    model = _build_model(args, model_config, model_config_foundation, heads, pair_r_max)
 
     if model_foundation is not None:
         model = load_foundations_elements(
@@ -265,7 +242,7 @@ def _determine_atomic_inter_shift(mean, heads):
 
 
 def _build_model(
-    args, model_config, model_config_foundation, heads, pair_r_max=None, lj_coeff_matrix=None
+    args, model_config, model_config_foundation, heads, pair_r_max=None
 ):  # pylint: disable=too-many-return-statements
     if args.model == "MACE":
         if args.interaction_first not in [
@@ -296,8 +273,9 @@ def _build_model(
             lj_epsilon=args.lj_epsilon,
             lj_sigma=args.lj_sigma,
             lj_scale=args.lj_scale,
-            lj_coeff_matrix=lj_coeff_matrix,
+            lj_repulsion_c=args.lj_repulsion_c,
             lj_trainable=args.lj_trainable,
+            lj_rcut_epsilon=args.lj_rcut_epsilon,
             compute_group_energies=args.compute_group_energies,
         )
     if args.model == "ScaleShiftMACE":
@@ -324,8 +302,9 @@ def _build_model(
             lj_epsilon=args.lj_epsilon,
             lj_sigma=args.lj_sigma,
             lj_scale=args.lj_scale,
-            lj_coeff_matrix=lj_coeff_matrix,
+            lj_repulsion_c=args.lj_repulsion_c,
             lj_trainable=args.lj_trainable,
+            lj_rcut_epsilon=args.lj_rcut_epsilon,
             compute_group_energies=args.compute_group_energies,
         )
     if args.model == "FoundationMACE":

@@ -42,3 +42,5 @@ dist/
 
 pretrained_model/
 .agent
+docs/
+CLAUDE.md

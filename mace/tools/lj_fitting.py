@@ -1,7 +1,7 @@
 ###########################################################################################
 # LJ Repulsion Post-Training Bias Fitting Module
 # Computes per-element-pair bias by analyzing minimum inter-atomic distances
-# and MACE per-atom energies at those distances.
+# and MACE total energies at those configurations.
 ###########################################################################################
 
 import logging
@@ -71,17 +71,17 @@ def compute_lj_rcut_matrix(
 
 def compute_bias_from_rcut(
     rcut_matrix: torch.Tensor,
-    mace_per_atom_energy: torch.Tensor,
+    mace_total_energy: torch.Tensor,
     repulsion_c: float,
 ) -> torch.Tensor:
-    """Compute bias matrix from rcut distances and MACE per-atom energies.
+    """Compute bias matrix from rcut distances and MACE total energies.
 
-    Formula: bias_ij = mace_per_atom_energy[i,j] - repulsion_c * rcut[i,j]^{-12} * 0.5
+    Formula: bias_ij = mace_total_energy[i,j] - repulsion_c * rcut[i,j]^{-12} * 0.5
 
     Args:
         rcut_matrix: [num_elements, num_elements] minimum distance per pair.
-        mace_per_atom_energy: [num_elements, num_elements] MACE per-atom energy
-            at the shortest-distance edge for each element pair.
+        mace_total_energy: [num_elements, num_elements] MACE total energy
+            of the configuration containing the shortest-distance edge.
         repulsion_c: Repulsion coefficient.
 
     Returns:
@@ -89,7 +89,7 @@ def compute_bias_from_rcut(
     """
     rcut_safe = torch.clamp(rcut_matrix, min=0.5)
     repulsion_term = repulsion_c * torch.pow(rcut_safe, -12) * 0.5
-    bias_matrix = mace_per_atom_energy - repulsion_term
+    bias_matrix = mace_total_energy - repulsion_term
 
     logger.info("Computed bias matrix: min=%.6f, max=%.6f",
                 bias_matrix.min().item(), bias_matrix.max().item())
@@ -108,7 +108,7 @@ def fit_lj_repulsion_bias(
     """Main post-training bias fitting function.
 
     Finds the minimum inter-atomic distance per element pair, runs MACE inference
-    on the corresponding batches, and computes bias values.
+    on the corresponding batches to obtain configuration total energy, and computes bias values.
 
     Args:
         model: Trained MACE or ScaleShiftMACE model.
@@ -166,7 +166,7 @@ def fit_lj_repulsion_bias(
     # Step 2 & 3: Run MACE inference on batches containing shortest distances
     logger.info("Step 2-3: Running MACE inference on relevant batches...")
 
-    mace_per_atom_energy = torch.zeros(
+    mace_total_energy = torch.zeros(
         (num_elements, num_elements), dtype=dtype
     )
 
@@ -190,19 +190,20 @@ def fit_lj_repulsion_bias(
             batch_on_device = batch_data.to(model_device)
 
             output = model(batch_on_device, training=False, compute_force=False)
-            node_energy = output["node_energy"].detach().cpu().to(dtype)
+            energy = output["energy"].detach().cpu().to(dtype)
 
-            # Step 4: Extract per-atom energy for the receiver atom at the shortest edge
             for pair in pairs:
                 edge_idx = best_edge_for_pair[pair]
+                # Find which graph in the batch this edge belongs to
                 receiver_atom = batch_data.edge_index[1, edge_idx].item()
-                mace_per_atom_energy[pair[0], pair[1]] = node_energy[receiver_atom]
+                graph_idx = batch_data.batch[receiver_atom].item()
+                mace_total_energy[pair[0], pair[1]] = energy[graph_idx]
 
-    logger.info("MACE per-atom energies at rcut: min=%.6f, max=%.6f",
-                mace_per_atom_energy.min().item(), mace_per_atom_energy.max().item())
+    logger.info("MACE total energies at rcut configs: min=%.6f, max=%.6f",
+                mace_total_energy.min().item(), mace_total_energy.max().item())
 
     # Step 5: Compute bias matrix
-    bias_matrix = compute_bias_from_rcut(rcut_matrix, mace_per_atom_energy, repulsion_c)
+    bias_matrix = compute_bias_from_rcut(rcut_matrix, mace_total_energy, repulsion_c)
 
     # Step 6: Zero out bias for pairs with no training data
     no_data_mask = rcut_matrix >= 999.0
@@ -214,7 +215,7 @@ def fit_lj_repulsion_bias(
 
     diagnostics = {
         "rcut_matrix": rcut_matrix,
-        "mace_per_atom_energy": mace_per_atom_energy,
+        "mace_total_energy": mace_total_energy,
         "num_pairs_with_data": num_pairs_found,
         "num_pairs_total": num_elements * num_elements,
         "repulsion_c": repulsion_c,

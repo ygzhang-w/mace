@@ -685,7 +685,8 @@ class ScaleShiftMACE(MACE):
                 e0 += embedding_energy
 
         # Interactions
-        node_es_list = [pair_node_energy]
+        # pair_node_energy is kept OUT of node_es_list to avoid scale_shift
+        node_es_list: List[torch.Tensor] = []
         node_feats_list: List[torch.Tensor] = []
 
         for i, (interaction, product) in enumerate(
@@ -723,6 +724,8 @@ class ScaleShiftMACE(MACE):
         node_feats_out = torch.cat(node_feats_list, dim=-1)
         node_inter_es = torch.sum(torch.stack(node_es_list, dim=0), dim=0)
         node_inter_es = self.scale_shift(node_inter_es, node_heads)
+        # Add pair_node_energy AFTER scale_shift so it's not distorted
+        node_inter_es = node_inter_es + pair_node_energy
         inter_e = scatter_sum(node_inter_es, data["batch"], dim=-1, dim_size=num_graphs)
 
         total_energy = e0 + inter_e

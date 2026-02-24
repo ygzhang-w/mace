@@ -68,7 +68,7 @@ class TestLJRepulsionBasis:
 
         # Each atom receives one edge from the other element type
         # V_edge = c * r^{-12} * 0.5 + bias(0,1) = 2.0 * 2.0^{-12} * 0.5 + 0.5
-        expected_edge = c * (r ** -12) * 0.5 + 0.5
+        expected_edge = c * (r**-12) * 0.5 + 0.5
         assert out[0].item() == pytest.approx(expected_edge, rel=1e-10)
         assert out[1].item() == pytest.approx(expected_edge, rel=1e-10)
 
@@ -97,20 +97,24 @@ class TestComputeLjRcutMatrix:
         from mace.tools.lj_fitting import compute_lj_rcut_matrix
 
         z_table = AtomicNumberTable([1, 6])
-        positions = torch.tensor([[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]], dtype=torch.float64)
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]], dtype=torch.float64
+        )
         node_attrs = torch.tensor([[1.0, 0.0], [0.0, 1.0]], dtype=torch.float64)
         edge_index = torch.tensor([[0, 1], [1, 0]])
         batch_idx = torch.tensor([0, 0])
         energy = torch.tensor(0.0, dtype=torch.float64)
 
-        data_loader = [torch_geometric.Batch(
-            positions=positions,
-            atomic_numbers=torch.tensor([1, 6]),
-            node_attrs=node_attrs,
-            edge_index=edge_index,
-            energy=energy,
-            batch=batch_idx,
-        )]
+        data_loader = [
+            torch_geometric.Batch(
+                positions=positions,
+                atomic_numbers=torch.tensor([1, 6]),
+                node_attrs=node_attrs,
+                edge_index=edge_index,
+                energy=energy,
+                batch=batch_idx,
+            )
+        ]
 
         rcut = compute_lj_rcut_matrix(data_loader, z_table)
         assert rcut.shape == (2, 2)
@@ -121,19 +125,183 @@ class TestComputeLjRcutMatrix:
         assert rcut[1, 1].item() > 100
 
 
-class TestComputeBiasFromRcut:
-    """Tests for compute_bias_from_rcut."""
+class TestDimerAlignment:
+    """Tests for dimer-based LJ repulsion bias fitting."""
 
-    def test_basic(self):
-        from mace.tools.lj_fitting import compute_bias_from_rcut
+    @staticmethod
+    def _build_model():
+        """Build a minimal ScaleShiftMACE with lj_repulsion (no rcut set yet)."""
+        table = AtomicNumberTable([1, 8])
+        model_config = dict(
+            r_max=5.0,
+            num_bessel=8,
+            num_polynomial_cutoff=5,
+            max_ell=2,
+            interaction_cls=modules.interaction_classes[
+                "RealAgnosticResidualInteractionBlock"
+            ],
+            interaction_cls_first=modules.interaction_classes[
+                "RealAgnosticResidualInteractionBlock"
+            ],
+            num_interactions=1,
+            num_elements=2,
+            hidden_irreps=o3.Irreps("16x0e"),
+            MLP_irreps=o3.Irreps("16x0e"),
+            gate=torch.nn.functional.silu,
+            atomic_energies=np.array([1.0, 3.0], dtype=float),
+            avg_num_neighbors=2.0,
+            atomic_numbers=table.zs,
+            correlation=2,
+            pair_repulsion=True,
+            pair_repulsion_type="lj_repulsion",
+            lj_repulsion_c=1.0,
+            lj_rcut_epsilon=0.01,
+            atomic_inter_scale=1.0,
+            atomic_inter_shift=0.0,
+        )
+        return modules.ScaleShiftMACE(**model_config), table
 
-        rcut = torch.tensor([[2.0, 1.5], [1.5, 2.0]], dtype=torch.float64)
-        mace_energy = torch.tensor([[0.1, 0.2], [0.2, 0.3]], dtype=torch.float64)
-        c = 1.0
+    @staticmethod
+    def _make_data_loader(table):
+        """Create a simple data loader with one H-O configuration."""
+        config = data.Configuration(
+            atomic_numbers=np.array([1, 8]),
+            positions=np.array([[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]]),
+            properties={"forces": np.zeros((2, 3)), "energy": -1.0},
+            property_weights={"forces": 1.0, "energy": 1.0},
+        )
+        atomic_data = data.AtomicData.from_config(config, z_table=table, cutoff=5.0)
+        return torch_geometric.dataloader.DataLoader(
+            dataset=[atomic_data], batch_size=1, shuffle=False
+        )
 
-        bias = compute_bias_from_rcut(rcut, mace_energy, c)
-        expected_01 = 0.2 - 1.0 * 1.5**(-12) * 0.5
-        assert bias[0, 1].item() == pytest.approx(expected_01, rel=1e-6)
+    def test_fit_returns_correct_shapes(self):
+        """fit_lj_repulsion_bias returns correct shapes."""
+        from mace.tools.lj_fitting import fit_lj_repulsion_bias
+
+        model, table = self._build_model()
+        loader = self._make_data_loader(table)
+
+        rcut_matrix, bias_matrix, diagnostics = fit_lj_repulsion_bias(
+            model=model,
+            data_loader=loader,
+            z_table=table,
+            repulsion_c=1.0,
+            device="cpu",
+            epsilon=0.01,
+        )
+
+        assert rcut_matrix.shape == (2, 2)
+        assert bias_matrix.shape == (2, 2)
+        assert "rcut_matrix" in diagnostics
+        assert "repulsion_c" in diagnostics
+
+    def test_bias_alignment_at_boundary(self):
+        """At r = lj_rcut - epsilon, MACE dimer energy should equal repulsion + bias."""
+        from mace.tools.lj_fitting import fit_lj_repulsion_bias
+
+        model, table = self._build_model()
+        loader = self._make_data_loader(table)
+        epsilon = 0.01
+        repulsion_c = 1.0
+
+        rcut_matrix, bias_matrix, _ = fit_lj_repulsion_bias(
+            model=model,
+            data_loader=loader,
+            z_table=table,
+            repulsion_c=repulsion_c,
+            device="cpu",
+            epsilon=epsilon,
+        )
+
+        # For H-O pair (indices 0,1): rcut should be ~1.5 (from loader data)
+        r_boundary = rcut_matrix[0, 1].item() - epsilon
+        repulsion_at_boundary = (
+            repulsion_c * r_boundary ** (-12) * 0.5 + bias_matrix[0, 1].item()
+        )
+
+        # Build the same dimer and run MACE inference to verify
+        dimer_config = data.Configuration(
+            atomic_numbers=np.array([1, 8]),
+            positions=np.array([[0.0, 0.0, 0.0], [r_boundary, 0.0, 0.0]]),
+            pbc=np.array([False, False, False]),
+            cell=np.eye(3) * 100.0,
+            properties={"forces": np.zeros((2, 3)), "energy": 0.0},
+            property_weights={"forces": 1.0, "energy": 1.0},
+        )
+        dimer_data = data.AtomicData.from_config(
+            dimer_config, z_table=table, cutoff=5.0
+        )
+        dimer_loader = torch_geometric.dataloader.DataLoader(
+            dataset=[dimer_data], batch_size=1, shuffle=False
+        )
+        batch = next(iter(dimer_loader))
+        model.eval()
+        with torch.no_grad():
+            output = model(batch.to_dict(), training=False, compute_force=False)
+        mace_energy = output["energy"].item()
+
+        assert repulsion_at_boundary == pytest.approx(mace_energy, abs=1e-6)
+
+    def test_no_data_pairs_get_zero_bias(self):
+        """Element pairs without training data should get zero bias."""
+        from mace.tools.lj_fitting import fit_lj_repulsion_bias
+
+        model, table = self._build_model()
+        loader = self._make_data_loader(table)
+
+        _, bias_matrix, _ = fit_lj_repulsion_bias(
+            model=model,
+            data_loader=loader,
+            z_table=table,
+            repulsion_c=1.0,
+            device="cpu",
+            epsilon=0.01,
+        )
+
+        # H-H (0,0) and O-O (1,1) have no data -> zero bias
+        assert bias_matrix[0, 0].item() == 0.0
+        assert bias_matrix[1, 1].item() == 0.0
+
+    def test_no_data_pairs_rcut_zeroed(self):
+        """Element pairs without training data should get rcut=0.0."""
+        from mace.tools.lj_fitting import fit_lj_repulsion_bias
+
+        model, table = self._build_model()
+        loader = self._make_data_loader(table)
+
+        rcut_matrix, _, _ = fit_lj_repulsion_bias(
+            model=model,
+            data_loader=loader,
+            z_table=table,
+            repulsion_c=1.0,
+            device="cpu",
+            epsilon=0.01,
+        )
+
+        # H-H (0,0) and O-O (1,1) have no data -> rcut=0.0
+        assert rcut_matrix[0, 0].item() == 0.0
+        assert rcut_matrix[1, 1].item() == 0.0
+
+    def test_bias_symmetry(self):
+        """bias[i,j] should equal bias[j,i]."""
+        from mace.tools.lj_fitting import fit_lj_repulsion_bias
+
+        model, table = self._build_model()
+        loader = self._make_data_loader(table)
+
+        _, bias_matrix, _ = fit_lj_repulsion_bias(
+            model=model,
+            data_loader=loader,
+            z_table=table,
+            repulsion_c=1.0,
+            device="cpu",
+            epsilon=0.01,
+        )
+
+        assert bias_matrix[0, 1].item() == pytest.approx(
+            bias_matrix[1, 0].item(), abs=1e-10
+        )
 
 
 class TestRegionSplitIntegration:

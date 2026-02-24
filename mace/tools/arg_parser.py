@@ -230,7 +230,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         "--lj_rcut_epsilon",
         help="Numerical safety margin for neighbor list filtering at lj_rcut boundary (used with --pair_repulsion_type lj_repulsion)",
         type=float,
-        default=0.01,
+        default=0.5,
     )
     parser.add_argument(
         "--compute_group_energies",

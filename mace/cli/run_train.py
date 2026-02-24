@@ -1000,6 +1000,7 @@ def run(args) -> None:
                 z_table=z_table,
                 repulsion_c=args.lj_repulsion_c,
                 device=device,
+                epsilon=args.lj_rcut_epsilon,
             )
 
             # Update model with fitted values

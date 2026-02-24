@@ -363,14 +363,12 @@ class MACE(torch.nn.Module):
         )  # [n_graphs, n_heads]
 
         # --- Neighbor list split for lj_repulsion ---
-        use_lj_split = (
-            self.has_lj_rcut
-            and hasattr(self, "pair_repulsion")
-            and not self.training
-        )
+        use_lj_split = self.has_lj_rcut and hasattr(self, "pair_repulsion")
 
         # Initialize repulsion edge variables (needed for TorchScript)
-        rep_mask = torch.zeros(lengths.shape[0], dtype=torch.bool, device=lengths.device)
+        rep_mask = torch.zeros(
+            lengths.shape[0], dtype=torch.bool, device=lengths.device
+        )
         rep_edge_index = data["edge_index"]
         rep_lengths = lengths
 
@@ -381,14 +379,16 @@ class MACE(torch.nn.Module):
             lengths_1d = lengths.squeeze(-1) if lengths.dim() > 1 else lengths
             edge_lj_rcut = self.lj_rcut_matrix[sender_z_all, receiver_z_all]
 
-            # MACE sees edges with r >= lj_rcut - epsilon
-            mace_mask = lengths_1d >= (edge_lj_rcut - self.lj_rcut_epsilon)
+            # Hard boundary at lj_rcut - epsilon
+            boundary = edge_lj_rcut - self.lj_rcut_epsilon
+            # MACE sees edges with r >= boundary
+            mace_mask = lengths_1d >= boundary
             mace_edge_index = data["edge_index"][:, mace_mask]
             mace_lengths = lengths[mace_mask]
             mace_vectors = vectors[mace_mask]
 
-            # Repulsion sees edges with r < lj_rcut (strict)
-            rep_mask = lengths_1d < edge_lj_rcut
+            # Repulsion sees edges with r < boundary
+            rep_mask = lengths_1d < boundary
             rep_edge_index = data["edge_index"][:, rep_mask]
             rep_lengths = lengths[rep_mask]
         else:
@@ -406,7 +406,10 @@ class MACE(torch.nn.Module):
             if use_lj_split:
                 if rep_mask.any():
                     pair_node_energy = self.pair_repulsion_fn(
-                        rep_lengths, data["node_attrs"], rep_edge_index, self.atomic_numbers
+                        rep_lengths,
+                        data["node_attrs"],
+                        rep_edge_index,
+                        self.atomic_numbers,
                     )
                 else:
                     pair_node_energy = torch.zeros_like(node_e0)
@@ -488,7 +491,9 @@ class MACE(torch.nn.Module):
 
         # Compute group_energy if enabled
         group_energy: Optional[torch.Tensor] = None
-        if getattr(self, "compute_group_energies", False) and hasattr(self, "group_energy_block"):
+        if getattr(self, "compute_group_energies", False) and hasattr(
+            self, "group_energy_block"
+        ):
             group_energy = self.group_energy_block(
                 node_energy=node_energy,
                 edge_index=data["edge_index"],
@@ -596,14 +601,12 @@ class ScaleShiftMACE(MACE):
         )  # [n_graphs, num_heads]
 
         # --- Neighbor list split for lj_repulsion ---
-        use_lj_split = (
-            self.has_lj_rcut
-            and hasattr(self, "pair_repulsion")
-            and not self.training
-        )
+        use_lj_split = self.has_lj_rcut and hasattr(self, "pair_repulsion")
 
         # Initialize repulsion edge variables (needed for TorchScript)
-        rep_mask = torch.zeros(lengths.shape[0], dtype=torch.bool, device=lengths.device)
+        rep_mask = torch.zeros(
+            lengths.shape[0], dtype=torch.bool, device=lengths.device
+        )
         rep_edge_index = data["edge_index"]
         rep_lengths = lengths
 
@@ -614,14 +617,16 @@ class ScaleShiftMACE(MACE):
             lengths_1d = lengths.squeeze(-1) if lengths.dim() > 1 else lengths
             edge_lj_rcut = self.lj_rcut_matrix[sender_z_all, receiver_z_all]
 
-            # MACE sees edges with r >= lj_rcut - epsilon
-            mace_mask = lengths_1d >= (edge_lj_rcut - self.lj_rcut_epsilon)
+            # Hard boundary at lj_rcut - epsilon
+            boundary = edge_lj_rcut - self.lj_rcut_epsilon
+            # MACE sees edges with r >= boundary
+            mace_mask = lengths_1d >= boundary
             mace_edge_index = data["edge_index"][:, mace_mask]
             mace_lengths = lengths[mace_mask]
             mace_vectors = vectors[mace_mask]
 
-            # Repulsion sees edges with r < lj_rcut (strict)
-            rep_mask = lengths_1d < edge_lj_rcut
+            # Repulsion sees edges with r < boundary
+            rep_mask = lengths_1d < boundary
             rep_edge_index = data["edge_index"][:, rep_mask]
             rep_lengths = lengths[rep_mask]
         else:
@@ -640,7 +645,10 @@ class ScaleShiftMACE(MACE):
             if use_lj_split:
                 if rep_mask.any():
                     pair_node_energy = self.pair_repulsion_fn(
-                        rep_lengths, data["node_attrs"], rep_edge_index, self.atomic_numbers
+                        rep_lengths,
+                        data["node_attrs"],
+                        rep_edge_index,
+                        self.atomic_numbers,
                     )
                 else:
                     pair_node_energy = torch.zeros_like(node_e0)
@@ -718,7 +726,7 @@ class ScaleShiftMACE(MACE):
         inter_e = scatter_sum(node_inter_es, data["batch"], dim=-1, dim_size=num_graphs)
 
         total_energy = e0 + inter_e
-        
+
         # adapt for float32
         if torch.get_default_dtype() == torch.float64:
             node_energy = node_e0.clone().double() + node_inter_es.clone().double()
@@ -727,7 +735,9 @@ class ScaleShiftMACE(MACE):
 
         # Compute group_energy if enabled
         group_energy: Optional[torch.Tensor] = None
-        if getattr(self, "compute_group_energies", False) and hasattr(self, "group_energy_block"):
+        if getattr(self, "compute_group_energies", False) and hasattr(
+            self, "group_energy_block"
+        ):
             group_energy = self.group_energy_block(
                 node_energy=node_energy,
                 edge_index=data["edge_index"],

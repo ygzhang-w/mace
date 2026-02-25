@@ -134,6 +134,48 @@ def fit_lj_repulsion_bias(
 
     no_data_mask = rcut_matrix >= 999.0
 
+    # Enable the split logic so dimer inference at boundary + delta
+    # is handled purely by MACE (no repulsion contribution).
+    # Prepare rcut_matrix: zero out no-data pairs so boundary is negative
+    # and all their edges go to MACE.
+    fitting_rcut = rcut_matrix.clone()
+    fitting_rcut[no_data_mask] = 0.0
+    old_has_lj_rcut = model.has_lj_rcut
+    model.lj_rcut_matrix.copy_(fitting_rcut.to(model_device))
+    model.has_lj_rcut = True
+
+    # Small offset to ensure the dimer edge lands on the MACE side of the
+    # hard boundary, avoiding float32 numerical ambiguity.
+    boundary_delta = max(1e-5, float(torch.finfo(torch.float32).eps))
+
+    def _run_dimer(z_i, z_j, distance):
+        """Run MACE inference on a dimer and return total energy."""
+        config = Configuration(
+            atomic_numbers=np.array([z_i, z_j]),
+            positions=np.array([[0.0, 0.0, 0.0], [distance, 0.0, 0.0]]),
+            pbc=np.array([False, False, False]),
+            cell=np.eye(3) * 100.0,
+            properties={"forces": np.zeros((2, 3)), "energy": 0.0},
+            property_weights={"forces": 1.0, "energy": 1.0},
+        )
+        atomic_data = AtomicData.from_config(
+            config, z_table=z_table, cutoff=r_max
+        )
+        loader = torch_geometric.dataloader.DataLoader(
+            dataset=[atomic_data], batch_size=1, shuffle=False
+        )
+        batch = next(iter(loader))
+        batch_dict = batch.to_dict()
+        batch_dict = {
+            k: v.to(model_device) if isinstance(v, torch.Tensor) else v
+            for k, v in batch_dict.items()
+        }
+        output = model(batch_dict, training=False, compute_force=False)
+        return output["energy"].detach().cpu().to(dtype).item()
+
+    # Distance beyond cutoff: no edges, gives E_no_edge = e0 + N*shift
+    r_far = r_max + 1.0
+
     with torch.no_grad():
         for i in range(num_elements):
             for j in range(i, num_elements):
@@ -152,57 +194,48 @@ def fit_lj_repulsion_bias(
                     )
                     continue
 
-                # Build dimer: atom 0 at origin, atom 1 at [r_boundary, 0, 0]
                 z_i = z_table.zs[i]
                 z_j = z_table.zs[j]
 
-                config = Configuration(
-                    atomic_numbers=np.array([z_i, z_j]),
-                    positions=np.array([[0.0, 0.0, 0.0], [r_boundary, 0.0, 0.0]]),
-                    pbc=np.array([False, False, False]),
-                    cell=np.eye(3) * 100.0,
-                    properties={"forces": np.zeros((2, 3)), "energy": 0.0},
-                    property_weights={"forces": 1.0, "energy": 1.0},
-                )
-                atomic_data = AtomicData.from_config(
-                    config, z_table=z_table, cutoff=r_max
-                )
-                loader = torch_geometric.dataloader.DataLoader(
-                    dataset=[atomic_data], batch_size=1, shuffle=False
-                )
-                batch = next(iter(loader))
-                batch_dict = batch.to_dict()
-                batch_dict = {
-                    k: v.to(model_device) if isinstance(v, torch.Tensor) else v
-                    for k, v in batch_dict.items()
-                }
+                # Dimer at boundary + delta: edge is on MACE side (no repulsion)
+                e_with_edge = _run_dimer(z_i, z_j, r_boundary + boundary_delta)
+                # Dimer beyond cutoff: no edges at all (baseline e0 + N*shift)
+                e_no_edge = _run_dimer(z_i, z_j, r_far)
 
-                output = model(batch_dict, training=False, compute_force=False)
-                e_mace = output["energy"].detach().cpu().to(dtype).item()
-
-                # bias_ij = E_mace - repulsion_c * r^{-12} * 0.5
+                # Continuity condition at boundary:
+                #   E_above = E_below
+                #   e0 + scale*readout(with) + N*shift
+                #     = e0 + scale*readout(no) + N*shift + 2*(c*r^-12*0.5 + bias)
+                # delta_E = E_with - E_no = scale*(readout_with - readout_no)
+                # bias = delta_E / 2 - c * r_boundary^{-12} * 0.5
+                delta_e = e_with_edge - e_no_edge
                 r_safe = max(r_boundary, 0.5)
                 repulsion_term = repulsion_c * r_safe ** (-12) * 0.5
-                bias_val = e_mace - repulsion_term
+                bias_val = delta_e / 2.0 - repulsion_term
 
                 bias_matrix[i, j] = bias_val
                 bias_matrix[j, i] = bias_val
-                mace_dimer_energy[i, j] = e_mace
-                mace_dimer_energy[j, i] = e_mace
+                mace_dimer_energy[i, j] = e_with_edge
+                mace_dimer_energy[j, i] = e_with_edge
 
                 logger.info(
                     "Pair (%d,%d) z=(%d,%d): rcut=%.4f, r_boundary=%.4f, "
-                    "E_mace=%.6f, repulsion=%.6f, bias=%.6f",
+                    "E_with=%.6f, E_no=%.6f, delta=%.6f, repulsion=%.6f, bias=%.6f",
                     i,
                     j,
                     z_i,
                     z_j,
                     rcut_matrix[i, j].item(),
                     r_boundary,
-                    e_mace,
+                    e_with_edge,
+                    e_no_edge,
+                    delta_e,
                     repulsion_term,
                     bias_val,
                 )
+
+    # Restore model state before setting final values
+    model.has_lj_rcut = old_has_lj_rcut
 
     # Zero out bias for pairs with no training data
     bias_matrix[no_data_mask] = 0.0

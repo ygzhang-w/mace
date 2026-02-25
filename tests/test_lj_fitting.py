@@ -197,12 +197,12 @@ class TestDimerAlignment:
         assert "repulsion_c" in diagnostics
 
     def test_bias_alignment_at_boundary(self):
-        """At r = lj_rcut - epsilon, MACE dimer energy should equal repulsion + bias."""
+        """Energy should be continuous at the boundary: E_above ≈ E_below."""
         from mace.tools.lj_fitting import fit_lj_repulsion_bias
 
         model, table = self._build_model()
         loader = self._make_data_loader(table)
-        epsilon = 0.01
+        epsilon = 0.5
         repulsion_c = 1.0
 
         rcut_matrix, bias_matrix, _ = fit_lj_repulsion_bias(
@@ -214,34 +214,41 @@ class TestDimerAlignment:
             epsilon=epsilon,
         )
 
-        # For H-O pair (indices 0,1): rcut should be ~1.5 (from loader data)
-        r_boundary = rcut_matrix[0, 1].item() - epsilon
-        repulsion_at_boundary = (
-            repulsion_c * r_boundary ** (-12) * 0.5 + bias_matrix[0, 1].item()
-        )
-
-        # Build the same dimer and run MACE inference to verify
-        dimer_config = data.Configuration(
-            atomic_numbers=np.array([1, 8]),
-            positions=np.array([[0.0, 0.0, 0.0], [r_boundary, 0.0, 0.0]]),
-            pbc=np.array([False, False, False]),
-            cell=np.eye(3) * 100.0,
-            properties={"forces": np.zeros((2, 3)), "energy": 0.0},
-            property_weights={"forces": 1.0, "energy": 1.0},
-        )
-        dimer_data = data.AtomicData.from_config(
-            dimer_config, z_table=table, cutoff=5.0
-        )
-        dimer_loader = torch_geometric.dataloader.DataLoader(
-            dataset=[dimer_data], batch_size=1, shuffle=False
-        )
-        batch = next(iter(dimer_loader))
+        # Apply fitted values to the model (enable split)
+        model.lj_rcut_matrix.copy_(rcut_matrix)
+        model.pair_repulsion_fn.bias_matrix.copy_(bias_matrix)
+        model.has_lj_rcut = True
         model.eval()
-        with torch.no_grad():
-            output = model(batch.to_dict(), training=False, compute_force=False)
-        mace_energy = output["energy"].item()
 
-        assert repulsion_at_boundary == pytest.approx(mace_energy, abs=1e-6)
+        r_boundary = rcut_matrix[0, 1].item() - epsilon
+
+        def _run_dimer(distance):
+            dimer_config = data.Configuration(
+                atomic_numbers=np.array([1, 8]),
+                positions=np.array([[0.0, 0.0, 0.0], [distance, 0.0, 0.0]]),
+                pbc=np.array([False, False, False]),
+                cell=np.eye(3) * 100.0,
+                properties={"forces": np.zeros((2, 3)), "energy": 0.0},
+                property_weights={"forces": 1.0, "energy": 1.0},
+            )
+            dimer_data = data.AtomicData.from_config(
+                dimer_config, z_table=table, cutoff=5.0
+            )
+            dimer_loader = torch_geometric.dataloader.DataLoader(
+                dataset=[dimer_data], batch_size=1, shuffle=False
+            )
+            batch = next(iter(dimer_loader))
+            with torch.no_grad():
+                output = model(batch.to_dict(), training=False, compute_force=False)
+            return output["energy"].item()
+
+        # E_above: just above boundary (MACE side, no repulsion)
+        e_above = _run_dimer(r_boundary + 1e-4)
+        # E_below: just below boundary (repulsion side, no MACE edge)
+        e_below = _run_dimer(r_boundary - 1e-4)
+
+        # Tolerance accounts for MACE energy variation across the ±1e-4 gap
+        assert e_above == pytest.approx(e_below, abs=5e-3)
 
     def test_no_data_pairs_get_zero_bias(self):
         """Element pairs without training data should get zero bias."""

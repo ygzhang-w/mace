@@ -1001,6 +1001,7 @@ def run(args) -> None:
                 repulsion_c=args.lj_repulsion_c,
                 device=device,
                 epsilon=args.lj_rcut_epsilon,
+                repulsion_c_min=args.lj_repulsion_c_min,
             )
 
             # Update model with fitted values

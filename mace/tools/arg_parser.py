@@ -221,6 +221,14 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=1.0,
     )
     parser.add_argument(
+        "--lj_repulsion_c_min",
+        help="Minimum allowed value for fitted c_ij. If a fitted c_ij falls below this value, "
+        "it is clamped to this minimum and bias is recomputed for energy continuity. "
+        "Default None means negative c raises an error (used with --pair_repulsion_type lj_repulsion)",
+        type=float,
+        default=None,
+    )
+    parser.add_argument(
         "--lj_trainable",
         help="Whether LJ bias is trainable during MACE training (used with --pair_repulsion_type lj_repulsion)",
         action="store_true",

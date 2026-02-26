@@ -85,6 +85,7 @@ def fit_lj_repulsion_bias(
     device: str = "cpu",
     dtype: torch.dtype = None,
     epsilon: float = 0.5,
+    repulsion_c_min: float = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Dict]:
     """Dimer-based post-training fitting for per-pair c_ij and bias_ij.
 
@@ -104,6 +105,9 @@ def fit_lj_repulsion_bias(
         device: Device for inference (default: "cpu").
         dtype: Data type (default: torch.get_default_dtype()).
         epsilon: Boundary offset (default: 0.5).
+        repulsion_c_min: Minimum allowed c_ij value. If set, fitted c_ij below this
+            value are clamped and bias is recomputed for energy continuity.
+            If None (default), negative c_ij raises ValueError.
 
     Returns:
         rcut_matrix: [num_elements, num_elements] minimum distance tensor.
@@ -221,7 +225,20 @@ def fit_lj_repulsion_bias(
             c_val = f_proj * (r_safe**13) / 6.0
             bias_val = delta_e / 2.0 - c_val * (r_safe**-12) * 0.5
 
-            if c_val < 0:
+            if repulsion_c_min is not None and c_val < repulsion_c_min:
+                logger.warning(
+                    "Pair (%d,%d) z=(%d,%d): fitted c_ij=%.6f < c_min=%.6f, "
+                    "clamping to c_min and recomputing bias for energy continuity.",
+                    i,
+                    j,
+                    z_i,
+                    z_j,
+                    c_val,
+                    repulsion_c_min,
+                )
+                c_val = repulsion_c_min
+                bias_val = delta_e / 2.0 - c_val * (r_safe**-12) * 0.5
+            elif c_val < 0:
                 raise ValueError(
                     f"Negative c_ij={c_val:.6f} for element pair ({i},{j}) "
                     f"z=({z_i},{z_j}) at r_boundary={r_boundary:.4f}. "

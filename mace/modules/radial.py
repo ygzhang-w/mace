@@ -387,13 +387,15 @@ class LJBasis(torch.nn.Module):
 
 @compile_mode("script")
 class LJRepulsionBasis(torch.nn.Module):
-    """Region-split Lennard-Jones repulsion potential with unified constant and per-pair bias.
+    """Region-split Lennard-Jones repulsion potential with per-pair c and bias.
 
-    V_edge = repulsion_c * r^{-12} * 0.5 + bias_ij
+    V_edge = c_ij * r^{-12} * 0.5 + bias_ij
 
     Args:
         num_elements: Number of element types in the model
-        repulsion_c: Unified repulsion constant for all pairs (default: 1.0)
+        repulsion_c: Default repulsion constant used to initialize c_matrix (default: 1.0)
+        c_matrix: Optional [num_elements, num_elements] tensor of per-pair repulsion constants.
+            If None, initialized to repulsion_c * ones.
         bias_matrix: Optional [num_elements, num_elements] bias tensor, defaults to zeros
         trainable: If True, bias_matrix is a trainable Parameter; otherwise a buffer
     """
@@ -402,12 +404,21 @@ class LJRepulsionBasis(torch.nn.Module):
         self,
         num_elements: int,
         repulsion_c: float = 1.0,
+        c_matrix: Optional[torch.Tensor] = None,
         bias_matrix: Optional[torch.Tensor] = None,
         trainable: bool = False,
     ):
         super().__init__()
         self.num_elements = num_elements
         self.repulsion_c = repulsion_c
+
+        if c_matrix is None:
+            c_matrix = torch.full(
+                (num_elements, num_elements),
+                repulsion_c,
+                dtype=torch.get_default_dtype(),
+            )
+        self.register_buffer("c_matrix", c_matrix)
 
         if bias_matrix is None:
             bias_matrix = torch.zeros(
@@ -433,7 +444,8 @@ class LJRepulsionBasis(torch.nn.Module):
         sender_z = torch.argmax(node_attrs[sender], dim=1)
         receiver_z = torch.argmax(node_attrs[receiver], dim=1)
 
-        # Look up bias for each edge
+        # Look up per-pair repulsion constant and bias for each edge
+        c_ij = self.c_matrix[sender_z, receiver_z]
         bias_ij = self.bias_matrix[sender_z, receiver_z]
 
         # Ensure x is 1D (squeeze if needed)
@@ -442,8 +454,8 @@ class LJRepulsionBasis(torch.nn.Module):
         # Prevent numerical overflow by clamping minimum distance
         x_safe = torch.clamp(x_flat, min=0.5)
 
-        # Compute edge potential: V_edge = c * r^{-12} * 0.5 + bias_ij
-        v_edges = self.repulsion_c * torch.pow(x_safe, -12) * 0.5 + bias_ij
+        # Compute edge potential: V_edge = c_ij * r^{-12} * 0.5 + bias_ij
+        v_edges = c_ij * torch.pow(x_safe, -12) * 0.5 + bias_ij
 
         # Aggregate to nodes
         V_LJ = scatter_sum(v_edges, receiver, dim=0, dim_size=node_attrs.size(0))

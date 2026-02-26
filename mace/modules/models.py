@@ -153,6 +153,7 @@ class MACE(torch.nn.Module):
         # Always register lj_rcut fields for TorchScript compatibility
         self.has_lj_rcut: bool = False
         self.lj_rcut_epsilon: float = lj_rcut_epsilon
+        self.lj_repulsion_mode: bool = False
         self.register_buffer(
             "lj_rcut_matrix",
             torch.zeros(num_elements, num_elements, dtype=torch.get_default_dtype()),
@@ -171,6 +172,7 @@ class MACE(torch.nn.Module):
                     lj_scale=lj_scale,
                 )
             elif pair_repulsion_type == "lj_repulsion":
+                self.lj_repulsion_mode = True
                 self.pair_repulsion_fn = LJRepulsionBasis(
                     num_elements=num_elements,
                     repulsion_c=lj_repulsion_c,
@@ -413,6 +415,9 @@ class MACE(torch.nn.Module):
                     )
                 else:
                     pair_node_energy = torch.zeros_like(node_e0)
+            elif self.lj_repulsion_mode:
+                # lj_repulsion not yet fitted (has_lj_rcut=False) → skip
+                pair_node_energy = torch.zeros_like(node_e0)
             else:
                 pair_node_energy = self.pair_repulsion_fn(
                     lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
@@ -652,6 +657,9 @@ class ScaleShiftMACE(MACE):
                     )
                 else:
                     pair_node_energy = torch.zeros_like(node_e0)
+            elif self.lj_repulsion_mode:
+                # lj_repulsion not yet fitted (has_lj_rcut=False) → skip
+                pair_node_energy = torch.zeros_like(node_e0)
             else:
                 pair_node_energy = self.pair_repulsion_fn(
                     lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers

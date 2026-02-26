@@ -89,6 +89,45 @@ class TestLJRepulsionBasis:
         assert "bias_matrix" in param_names
         assert basis.bias_matrix.requires_grad is True
 
+    def test_init_default_c_matrix(self):
+        """Default init creates c_matrix filled with repulsion_c."""
+        basis = LJRepulsionBasis(num_elements=3, repulsion_c=2.0)
+        assert basis.c_matrix.shape == (3, 3)
+        assert torch.all(basis.c_matrix == 2.0)
+
+    def test_init_with_c_matrix(self):
+        """Custom c_matrix is used when provided."""
+        c = torch.tensor([[1.0, 2.0], [2.0, 3.0]], dtype=torch.float64)
+        basis = LJRepulsionBasis(num_elements=2, repulsion_c=1.0, c_matrix=c)
+        assert torch.allclose(basis.c_matrix, c)
+
+    def test_c_matrix_is_buffer(self):
+        """c_matrix should be a buffer, not a parameter."""
+        basis = LJRepulsionBasis(num_elements=2)
+        buffer_names = [name for name, _ in basis.named_buffers()]
+        assert "c_matrix" in buffer_names
+        param_names = [name for name, _ in basis.named_parameters()]
+        assert "c_matrix" not in param_names
+
+    def test_forward_uses_per_pair_c(self):
+        """Forward should use c_matrix[sender_z, receiver_z] per edge."""
+        c = torch.tensor([[1.0, 3.0], [3.0, 2.0]], dtype=torch.float64)
+        bias = torch.zeros(2, 2, dtype=torch.float64)
+        basis = LJRepulsionBasis(
+            num_elements=2, repulsion_c=1.0, c_matrix=c, bias_matrix=bias
+        )
+
+        r = 2.0
+        x = torch.tensor([r, r], dtype=torch.float64)
+        node_attrs = torch.tensor([[1.0, 0.0], [0.0, 1.0]], dtype=torch.float64)
+        edge_index = torch.tensor([[0, 1], [1, 0]])
+        atomic_numbers = torch.tensor([1, 6])
+
+        out = basis(x, node_attrs, edge_index, atomic_numbers)
+        expected = 3.0 * (r**-12) * 0.5
+        assert out[0].item() == pytest.approx(expected, rel=1e-10)
+        assert out[1].item() == pytest.approx(expected, rel=1e-10)
+
 
 class TestComputeLjRcutMatrix:
     """Tests for compute_lj_rcut_matrix."""
@@ -182,16 +221,17 @@ class TestDimerAlignment:
         model, table = self._build_model()
         loader = self._make_data_loader(table)
 
-        rcut_matrix, bias_matrix, diagnostics = fit_lj_repulsion_bias(
+        rcut_matrix, c_matrix, bias_matrix, diagnostics = fit_lj_repulsion_bias(
             model=model,
             data_loader=loader,
             z_table=table,
             repulsion_c=1.0,
             device="cpu",
-            epsilon=0.01,
+            epsilon=0.5,
         )
 
         assert rcut_matrix.shape == (2, 2)
+        assert c_matrix.shape == (2, 2)
         assert bias_matrix.shape == (2, 2)
         assert "rcut_matrix" in diagnostics
         assert "repulsion_c" in diagnostics
@@ -205,7 +245,7 @@ class TestDimerAlignment:
         epsilon = 0.5
         repulsion_c = 1.0
 
-        rcut_matrix, bias_matrix, _ = fit_lj_repulsion_bias(
+        rcut_matrix, c_matrix, bias_matrix, _ = fit_lj_repulsion_bias(
             model=model,
             data_loader=loader,
             z_table=table,
@@ -216,6 +256,7 @@ class TestDimerAlignment:
 
         # Apply fitted values to the model (enable split)
         model.lj_rcut_matrix.copy_(rcut_matrix)
+        model.pair_repulsion_fn.c_matrix.copy_(c_matrix)
         model.pair_repulsion_fn.bias_matrix.copy_(bias_matrix)
         model.has_lj_rcut = True
         model.eval()
@@ -257,13 +298,13 @@ class TestDimerAlignment:
         model, table = self._build_model()
         loader = self._make_data_loader(table)
 
-        _, bias_matrix, _ = fit_lj_repulsion_bias(
+        _, _, bias_matrix, _ = fit_lj_repulsion_bias(
             model=model,
             data_loader=loader,
             z_table=table,
             repulsion_c=1.0,
             device="cpu",
-            epsilon=0.01,
+            epsilon=0.5,
         )
 
         # H-H (0,0) and O-O (1,1) have no data -> zero bias
@@ -277,13 +318,13 @@ class TestDimerAlignment:
         model, table = self._build_model()
         loader = self._make_data_loader(table)
 
-        rcut_matrix, _, _ = fit_lj_repulsion_bias(
+        rcut_matrix, _, _, _ = fit_lj_repulsion_bias(
             model=model,
             data_loader=loader,
             z_table=table,
             repulsion_c=1.0,
             device="cpu",
-            epsilon=0.01,
+            epsilon=0.5,
         )
 
         # H-H (0,0) and O-O (1,1) have no data -> rcut=0.0
@@ -297,18 +338,117 @@ class TestDimerAlignment:
         model, table = self._build_model()
         loader = self._make_data_loader(table)
 
-        _, bias_matrix, _ = fit_lj_repulsion_bias(
+        _, _, bias_matrix, _ = fit_lj_repulsion_bias(
             model=model,
             data_loader=loader,
             z_table=table,
             repulsion_c=1.0,
             device="cpu",
-            epsilon=0.01,
+            epsilon=0.5,
         )
 
         assert bias_matrix[0, 1].item() == pytest.approx(
             bias_matrix[1, 0].item(), abs=1e-10
         )
+
+    def test_fit_returns_c_matrix(self):
+        """fit_lj_repulsion_bias should return c_matrix as second element."""
+        from mace.tools.lj_fitting import fit_lj_repulsion_bias
+
+        model, table = self._build_model()
+        loader = self._make_data_loader(table)
+
+        rcut_matrix, c_matrix, bias_matrix, diagnostics = fit_lj_repulsion_bias(
+            model=model,
+            data_loader=loader,
+            z_table=table,
+            repulsion_c=1.0,
+            device="cpu",
+            epsilon=0.5,
+        )
+
+        assert c_matrix.shape == (2, 2)
+        # H-O pair should have c > 0 (repulsive)
+        assert c_matrix[0, 1].item() > 0
+        # Symmetry
+        assert c_matrix[0, 1].item() == pytest.approx(c_matrix[1, 0].item(), abs=1e-10)
+        # No-data pairs get default repulsion_c
+        assert c_matrix[0, 0].item() == pytest.approx(1.0)
+
+    def test_c_matrix_symmetry(self):
+        """c_matrix[i,j] should equal c_matrix[j,i]."""
+        from mace.tools.lj_fitting import fit_lj_repulsion_bias
+
+        model, table = self._build_model()
+        loader = self._make_data_loader(table)
+
+        _, c_matrix, _, _ = fit_lj_repulsion_bias(
+            model=model,
+            data_loader=loader,
+            z_table=table,
+            repulsion_c=1.0,
+            device="cpu",
+            epsilon=0.5,
+        )
+
+        assert c_matrix[0, 1].item() == pytest.approx(c_matrix[1, 0].item(), abs=1e-10)
+
+    def test_force_continuity_at_boundary(self):
+        """Force should be continuous at the boundary: F_above approx F_below."""
+        from mace.tools.lj_fitting import fit_lj_repulsion_bias
+
+        model, table = self._build_model()
+        loader = self._make_data_loader(table)
+        epsilon = 0.5
+
+        rcut_matrix, c_matrix, bias_matrix, _ = fit_lj_repulsion_bias(
+            model=model,
+            data_loader=loader,
+            z_table=table,
+            repulsion_c=1.0,
+            device="cpu",
+            epsilon=epsilon,
+        )
+
+        # Apply fitted values to the model
+        model.lj_rcut_matrix.copy_(rcut_matrix)
+        model.pair_repulsion_fn.c_matrix.copy_(c_matrix)
+        model.pair_repulsion_fn.bias_matrix.copy_(bias_matrix)
+        model.has_lj_rcut = True
+        model.eval()
+
+        r_boundary = rcut_matrix[0, 1].item() - epsilon
+
+        def _run_dimer_with_force(distance):
+            dimer_config = data.Configuration(
+                atomic_numbers=np.array([1, 8]),
+                positions=np.array([[0.0, 0.0, 0.0], [distance, 0.0, 0.0]]),
+                pbc=np.array([False, False, False]),
+                cell=np.eye(3) * 100.0,
+                properties={"forces": np.zeros((2, 3)), "energy": 0.0},
+                property_weights={"forces": 1.0, "energy": 1.0},
+            )
+            dimer_data = data.AtomicData.from_config(
+                dimer_config, z_table=table, cutoff=5.0
+            )
+            dimer_loader = torch_geometric.dataloader.DataLoader(
+                dataset=[dimer_data], batch_size=1, shuffle=False
+            )
+            batch = next(iter(dimer_loader))
+            batch_dict = batch.to_dict()
+            output = model(batch_dict, training=False, compute_force=True)
+            return output["forces"].detach()
+
+        # Force just above boundary (MACE side)
+        f_above = _run_dimer_with_force(r_boundary + 1e-4)
+        # Force just below boundary (repulsion side)
+        f_below = _run_dimer_with_force(r_boundary - 1e-4)
+
+        # Compare atom 1's x-component of force
+        f_above_x = f_above[1, 0].item()
+        f_below_x = f_below[1, 0].item()
+
+        assert f_above_x == pytest.approx(f_below_x, abs=0.1)
 
 
 class TestRegionSplitIntegration:
@@ -446,3 +586,33 @@ class TestRegionSplitIntegration:
         with torch.no_grad():
             output = model(batch.to_dict(), training=False, compute_force=False)
         assert torch.isfinite(output["energy"])
+
+    def test_lj_repulsion_zero_during_training(self):
+        """LJ repulsion should contribute zero energy when has_lj_rcut=False."""
+        # Build model WITHOUT rcut_matrix -> has_lj_rcut=False
+        model, table = self._build_model(rcut_matrix=None)
+        assert model.has_lj_rcut is False
+        model.eval()
+
+        # Run with a close atom pair that would normally trigger large repulsion
+        atomic_data = self._make_atomic_data(table, r_close=0.8)
+        loader = torch_geometric.dataloader.DataLoader(
+            dataset=[atomic_data], batch_size=1, shuffle=False
+        )
+        batch = next(iter(loader))
+
+        # Run model and get energy WITH pair repulsion (current unfitted state)
+        with torch.no_grad():
+            output_with = model(batch.to_dict(), training=False, compute_force=False)
+
+        # Temporarily remove pair_repulsion to get baseline energy
+        old_pair_repulsion = model.pair_repulsion
+        del model.pair_repulsion
+        with torch.no_grad():
+            output_without = model(batch.to_dict(), training=False, compute_force=False)
+        model.pair_repulsion = old_pair_repulsion
+
+        # Energies should be identical: unfitted LJ repulsion contributes nothing
+        assert output_with["energy"].item() == pytest.approx(
+            output_without["energy"].item(), abs=1e-10
+        )

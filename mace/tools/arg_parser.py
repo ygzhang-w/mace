@@ -708,6 +708,13 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default="REF_qdiv",
     )
     parser.add_argument(
+        "--Q0s",
+        help="Per-element qdiv biases. Accepts 'average' (compute from training data), a dict literal (e.g. '{1: 0.96, 8: 6.27}'), or a path to a .json file.",
+        type=str,
+        default=None,
+        required=False,
+    )
+    parser.add_argument(
         "--elec_temp_key",
         help="Key of electronic temperature in training xyz",
         type=str,

@@ -13,6 +13,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import List, Optional
 
+import numpy as np
+
 import torch.distributed
 from e3nn.util import jit
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -61,6 +63,7 @@ from mace.tools.scripts_utils import (
     dict_to_array,
     extract_config_mace_model,
     get_atomic_energies,
+    get_atomic_qdivs,
     get_avg_num_neighbors,
     get_config_type_weights,
     get_dataset_from_xyz,
@@ -542,6 +545,20 @@ def run(args) -> None:
         args.compute_stress = False
         args.compute_dipole = False
         args.compute_polarizability = False
+        # Compute per-element qdiv biases (Q0s)
+        if args.Q0s is not None:
+            atomic_qdiv_dict = get_atomic_qdivs(
+                args.Q0s, head_configs[0].collections.train, z_table
+            )
+            logging.info(
+                "Per-element qdiv biases (Q0s): "
+                + ", ".join(f"Z={z}: {atomic_qdiv_dict[z]:.6f}" for z in z_table.zs)
+            )
+            args.atomic_qdiv_bias = np.array(
+                [atomic_qdiv_dict[z] for z in z_table.zs]
+            )
+        else:
+            args.atomic_qdiv_bias = None
     elif args.model == "AtomicDipolesMACE":
         atomic_energies = None
         dipole_only = True

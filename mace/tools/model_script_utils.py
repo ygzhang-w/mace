@@ -345,6 +345,7 @@ def _build_model(
         assert (
             args.error_table == "QdivRMSE"
         ), "Use error_table QdivRMSE with AtomicQdivMACE model"
+        atomic_qdiv_bias = getattr(args, "atomic_qdiv_bias", None)
         return modules.AtomicQdivMACE(
             **model_config,
             correlation=args.correlation,
@@ -353,6 +354,7 @@ def _build_model(
                 "RealAgnosticInteractionBlock"
             ],
             MLP_irreps=o3.Irreps(args.MLP_irreps),
+            atomic_qdiv_bias=atomic_qdiv_bias,
         )
     if args.model == "AtomicDipolesMACE":
         assert args.loss == "dipole", "Use dipole loss with AtomicDipolesMACE model"

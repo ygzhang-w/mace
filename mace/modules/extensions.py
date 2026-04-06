@@ -1,5 +1,6 @@
 from typing import Any, Callable, Dict, List, Optional, Type
 
+import numpy as np
 import torch
 from e3nn import o3
 from e3nn.util.jit import compile_mode
@@ -18,6 +19,7 @@ except (ImportError, ModuleNotFoundError):
     GRAPH_LONGRANGE_AVAILABLE = False
 
 from mace.modules.blocks import (
+    AtomicEnergiesBlock,
     EquivariantProductBasisBlock,
     InteractionBlock,
     LinearNodeEmbeddingBlock,
@@ -1017,6 +1019,7 @@ class AtomicQdivMACE(torch.nn.Module):
         atomic_energies: Optional[
             None
         ],  # Just here to make it compatible with energy models, MUST be None
+        atomic_qdiv_bias: Optional[np.ndarray] = None,
         apply_cutoff: bool = True,  # pylint: disable=unused-argument
         use_reduced_cg: bool = True,  # pylint: disable=unused-argument
         use_so3: bool = False,  # pylint: disable=unused-argument
@@ -1036,6 +1039,11 @@ class AtomicQdivMACE(torch.nn.Module):
             "num_interactions", torch.tensor(num_interactions, dtype=torch.int64)
         )
         assert atomic_energies is None
+
+        if atomic_qdiv_bias is not None:
+            self.atomic_qdiv_bias_fn = AtomicEnergiesBlock(atomic_qdiv_bias)
+        else:
+            self.atomic_qdiv_bias_fn = None
 
         # Embedding
         node_attr_irreps = o3.Irreps([(num_elements, (0, 1))])
@@ -1176,6 +1184,11 @@ class AtomicQdivMACE(torch.nn.Module):
 
         # Sum contributions from all interaction layers
         atomic_qdiv = torch.stack(qdiv_contributions, dim=-1).sum(dim=-1)  # [n_nodes,]
+
+        # Add per-element Q0s bias (shift)
+        if self.atomic_qdiv_bias_fn is not None:
+            q0s = self.atomic_qdiv_bias_fn(data["node_attrs"]).squeeze(-1)  # [n_nodes,]
+            atomic_qdiv = atomic_qdiv + q0s
 
         output = {
             "qdiv": atomic_qdiv,

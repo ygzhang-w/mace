@@ -393,6 +393,34 @@ def compute_average_E0s(
     return atomic_energies_dict
 
 
+def compute_average_Q0s(
+    collections_train: Configurations, z_table: AtomicNumberTable
+) -> Dict[int, float]:
+    """
+    Compute the average qdiv value for each element from training configurations.
+    Returns dictionary mapping atomic_number -> mean_qdiv.
+    """
+    qdiv_sums = {z: 0.0 for z in z_table.zs}
+    qdiv_counts = {z: 0 for z in z_table.zs}
+    for config in collections_train:
+        qdiv = config.properties.get("qdiv")
+        if qdiv is None:
+            continue
+        for z in z_table.zs:
+            mask = config.atomic_numbers == z
+            if mask.any():
+                qdiv_sums[z] += float(np.sum(qdiv[mask]))
+                qdiv_counts[z] += int(np.sum(mask))
+    atomic_qdiv_dict = {}
+    for z in z_table.zs:
+        if qdiv_counts[z] > 0:
+            atomic_qdiv_dict[z] = qdiv_sums[z] / qdiv_counts[z]
+        else:
+            logging.warning(f"No qdiv data for element Z={z}, setting Q0 to 0.0")
+            atomic_qdiv_dict[z] = 0.0
+    return atomic_qdiv_dict
+
+
 def estimate_e0s_from_foundation(
     foundation_model,
     foundation_e0s: Dict[int, float],

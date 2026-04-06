@@ -624,6 +624,42 @@ def get_atomic_energies(E0s, train_collection, z_table) -> dict:
     return atomic_energies_dict
 
 
+def get_atomic_qdivs(Q0s, train_collection, z_table) -> dict:
+    logging.info(
+        "Computing per-element qdiv biases (Q0s) from command line argument"
+    )
+    if Q0s.lower() == "average":
+        logging.info(
+            "Computing average Q0s from training data"
+        )
+        try:
+            assert train_collection is not None
+            atomic_qdiv_dict = data.compute_average_Q0s(
+                train_collection, z_table
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"Could not compute average Q0s, error {e} occured"
+            ) from e
+    else:
+        if Q0s.endswith(".json"):
+            logging.info(f"Loading Q0s from {Q0s}")
+            with open(Q0s, "r", encoding="utf-8") as f:
+                atomic_qdiv_dict = json.load(f)
+                atomic_qdiv_dict = {
+                    int(key): value for key, value in atomic_qdiv_dict.items()
+                }
+        else:
+            try:
+                atomic_qdiv_dict = ast.literal_eval(Q0s)
+                assert isinstance(atomic_qdiv_dict, dict)
+            except Exception as e:
+                raise RuntimeError(
+                    f"Q0s specified invalidly, error {e} occured"
+                ) from e
+    return atomic_qdiv_dict
+
+
 def get_avg_num_neighbors(head_configs, args, train_loader, device):
     if all(head_config.compute_avg_num_neighbors for head_config in head_configs):
         logging.info("Computing average number of neighbors")

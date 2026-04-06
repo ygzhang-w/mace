@@ -144,6 +144,11 @@ def valid_err_log(
         logging.info(
             f"{inintial_phrase}: head: {valid_loader_name}, loss={valid_loss:8.8f}, RMSE_E_per_atom={error_e:8.2f} meV, RMSE_F={error_f:8.2f} meV / A, RMSE_Mu_per_atom={error_mu:8.2f} mDebye",
         )
+    elif log_errors == "QdivRMSE":
+        error_qdiv = eval_metrics["rmse_qdiv"]
+        logging.info(
+            f"{inintial_phrase}: head: {valid_loader_name}, loss={valid_loss:8.8f}, RMSE_qdiv={error_qdiv:8.6f}",
+        )
 
 
 def train(
@@ -618,6 +623,8 @@ class MACELoss(Metric):
         self.add_state(
             "delta_polarizability_per_atom", default=[], dist_reduce_fx="cat"
         )
+        self.add_state("qdiv_computed", default=torch.tensor(0.0), dist_reduce_fx="sum")
+        self.add_state("delta_qdiv", default=[], dist_reduce_fx="cat")
 
     def update(self, batch, output):  # pylint: disable=arguments-differ
         loss = self.loss_fn(pred=output, ref=batch)
@@ -687,6 +694,15 @@ class MACELoss(Metric):
                 batch.weight,
                 batch.polarizability_weight,
                 spread_quantity_vector=False,
+            )
+        if output.get("qdiv") is not None and batch.qdiv is not None:
+            self.delta_qdiv.append(batch.qdiv.squeeze(-1) - output["qdiv"])
+            self.qdiv_computed += filter_nonzero_weight(
+                batch,
+                self.delta_qdiv,
+                batch.weight,
+                batch.qdiv_weight,
+                spread_atoms=True,
             )
 
     def convert(self, delta: Union[torch.Tensor, List[torch.Tensor]]) -> np.ndarray:
@@ -764,5 +780,10 @@ class MACELoss(Metric):
                 delta_polarizability_per_atom
             )
             aux["q95_polarizability"] = compute_q95(delta_polarizability)
+        if self.qdiv_computed:
+            delta_qdiv = self.convert(self.delta_qdiv)
+            aux["mae_qdiv"] = compute_mae(delta_qdiv)
+            aux["rmse_qdiv"] = compute_rmse(delta_qdiv)
+            aux["q95_qdiv"] = compute_q95(delta_qdiv)
 
         return aux["loss"], aux

@@ -125,6 +125,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
             "DipoleMAE",
             "DipolePolarRMSE",
             "EnergyDipoleRMSE",
+            "QdivRMSE",
         ],
         default="PerAtomRMSE",
     )
@@ -143,6 +144,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
             "ScaleShiftBOTNet",
             "AtomicDipolesMACE",
             "AtomicDielectricMACE",
+            "AtomicQdivMACE",
             "EnergyDipolesMACE",
         ],
     )
@@ -700,6 +702,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=DefaultKeys.CHARGES.value,
     )
     parser.add_argument(
+        "--qdiv_key",
+        help="Key of per-atom qdiv values in training xyz",
+        type=str,
+        default="REF_qdiv",
+    )
+    parser.add_argument(
         "--elec_temp_key",
         help="Key of electronic temperature in training xyz",
         type=str,
@@ -764,6 +772,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
             "universal",
             "energy_forces_dipole",
             "l1l2energyforces",
+            "qdiv",
         ],
     )
     parser.add_argument(
@@ -820,6 +829,17 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         type=float,
         default=1.0,
         dest="swa_dipole_weight",
+    )
+    parser.add_argument(
+        "--qdiv_weight", help="weight of qdiv loss", type=float, default=1.0
+    )
+    parser.add_argument(
+        "--swa_qdiv_weight",
+        "--stage_two_qdiv_weight",
+        help="weight of qdiv loss after starting Stage Two",
+        type=float,
+        default=1.0,
+        dest="swa_qdiv_weight",
     )
     parser.add_argument(
         "--swa_polarizability_weight",

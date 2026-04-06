@@ -183,12 +183,13 @@ def filter_nonzero_weight(
     quantity = quantity_l[-1]
     # repeat with interleaving for per-atom quantities
     if spread_atoms:
-        weight = torch.repeat_interleave(
-            weight, batch.ptr[1:] - batch.ptr[:-1]
-        ).unsqueeze(-1)
+        weight = torch.repeat_interleave(weight, batch.ptr[1:] - batch.ptr[:-1])
         quantity_weight = torch.repeat_interleave(
             quantity_weight, batch.ptr[1:] - batch.ptr[:-1]
-        ).unsqueeze(-1)
+        )
+        if len(quantity.shape) > 1:
+            weight = weight.unsqueeze(-1)
+            quantity_weight = quantity_weight.unsqueeze(-1)
 
     # repeat for additional dimensions
     if len(quantity.shape) > 1:

@@ -24,10 +24,11 @@ from .blocks import (
     RealAgnosticResidualNonLinearInteractionBlock,
     ScaleShiftBlock,
 )
-from .extensions import PolarMACE
+from .extensions import AtomicQdivMACE, PolarMACE
 from .loss import (
     DipolePolarLoss,
     DipoleSingleLoss,
+    QdivSingleLoss,
     UniversalLoss,
     WeightedEnergyForcesDipoleLoss,
     WeightedEnergyForcesL1L2Loss,
@@ -108,6 +109,7 @@ __all__ = [
     "MACE",
     "ScaleShiftMACE",
     "AtomicDipolesMACE",
+    "AtomicQdivMACE",
     "AtomicDielectricMACE",
     "EnergyDipolesMACE",
     "PolarMACE",
@@ -116,6 +118,7 @@ __all__ = [
     "WeightedEnergyForcesVirialsLoss",
     "WeightedEnergyForcesStressLoss",
     "DipoleSingleLoss",
+    "QdivSingleLoss",
     "WeightedEnergyForcesDipoleLoss",
     "WeightedHuberEnergyForcesStressLoss",
     "UniversalLoss",

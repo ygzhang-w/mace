@@ -156,6 +156,26 @@ def weighted_mean_squared_error_dipole(
 
 
 # ------------------------------------------------------------------------------
+# Qdiv Loss Function
+# ------------------------------------------------------------------------------
+
+
+def mean_squared_error_qdiv(
+    ref: Batch, pred: TensorDict, ddp: Optional[bool] = None
+) -> torch.Tensor:
+    configs_weight = torch.repeat_interleave(ref.weight, ref.ptr[1:] - ref.ptr[:-1])
+    configs_qdiv_weight = torch.repeat_interleave(
+        ref.qdiv_weight, ref.ptr[1:] - ref.ptr[:-1]
+    )
+    raw_loss = (
+        configs_weight
+        * configs_qdiv_weight
+        * torch.square(ref["qdiv"].squeeze(-1) - pred["qdiv"])
+    )
+    return reduce_loss(raw_loss, ddp)
+
+
+# ------------------------------------------------------------------------------
 # Polarizability Loss Function
 # ------------------------------------------------------------------------------
 
@@ -524,6 +544,24 @@ class DipoleSingleLoss(torch.nn.Module):
 
     def __repr__(self):
         return f"{self.__class__.__name__}(dipole_weight={self.dipole_weight:.3f})"
+
+
+class QdivSingleLoss(torch.nn.Module):
+    def __init__(self, qdiv_weight=1.0) -> None:
+        super().__init__()
+        self.register_buffer(
+            "qdiv_weight",
+            torch.tensor(qdiv_weight, dtype=torch.get_default_dtype()),
+        )
+
+    def forward(
+        self, ref: Batch, pred: TensorDict, ddp: Optional[bool] = None
+    ) -> torch.Tensor:
+        loss = mean_squared_error_qdiv(ref, pred, ddp)
+        return self.qdiv_weight * loss
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(qdiv_weight={self.qdiv_weight:.3f})"
 
 
 class DipolePolarLoss(torch.nn.Module):

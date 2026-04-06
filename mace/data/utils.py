@@ -61,7 +61,7 @@ def update_keyspec_from_kwargs(
         "polarizability_key",
         "total_spin_key",
     ]
-    arrays = ["forces_key", "charges_key"]
+    arrays = ["forces_key", "charges_key", "qdiv_key"]
     info_keys = {}
     arrays_keys = {}
     for key in infos:
@@ -295,7 +295,12 @@ def load_from_xyz(
     has_forces = any(final_forces_key in atoms.arrays for atoms in atoms_list)
     has_dipole = any(final_dipole_key in atoms.info for atoms in atoms_list)
 
-    if not has_energy and not has_forces and not has_dipole:
+    final_qdiv_key = key_specification.arrays_keys.get("qdiv", None)
+    has_qdiv = final_qdiv_key is not None and any(
+        final_qdiv_key in atoms.arrays for atoms in atoms_list
+    )
+
+    if not has_energy and not has_forces and not has_dipole and not has_qdiv:
         msg = f"None of '{final_energy_key}', '{final_forces_key}', and '{final_dipole_key}' found in '{file_path}'."
         if no_data_ok:
             logging.warning(msg + " Continuing because no_data_ok=True was passed in.")

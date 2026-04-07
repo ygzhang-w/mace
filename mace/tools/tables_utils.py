@@ -107,6 +107,13 @@ def create_error_table(
             "RMSE MU / mDebye / atom",
             "rel MU RMSE %",
         ]
+    elif table_type == "QdivRMSE":
+        table.field_names = [
+            "config_type",
+            "RMSE Qdiv",
+            "MAE Qdiv",
+            "Q95 Qdiv",
+        ]
 
     for name in sorted(all_data_loaders, key=custom_key):
         if any(skip_head in name for skip_head in skip_heads):
@@ -257,6 +264,15 @@ def create_error_table(
                     f"{metrics['rel_rmse_f']:8.1f}",
                     f"{metrics['rmse_mu_per_atom'] * 1000:8.1f}",
                     f"{metrics['rel_rmse_mu']:8.1f}",
+                ]
+            )
+        elif table_type == "QdivRMSE":
+            table.add_row(
+                [
+                    name,
+                    f"{metrics['rmse_qdiv']:8.6f}",
+                    f"{metrics['mae_qdiv']:8.6f}",
+                    f"{metrics['q95_qdiv']:8.6f}",
                 ]
             )
     return table

@@ -147,7 +147,7 @@ def valid_err_log(
     elif log_errors == "QdivRMSE":
         error_qdiv = eval_metrics["rmse_qdiv"]
         logging.info(
-            f"{inintial_phrase}: head: {valid_loader_name}, loss={valid_loss:8.8f}, RMSE_qdiv={error_qdiv:8.6f}",
+            f"{inintial_phrase}: head: {valid_loader_name}, loss={valid_loss:8.8f}, RMSE_qdiv={error_qdiv:8.6f} e",
         )
 
 

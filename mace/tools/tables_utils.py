@@ -110,9 +110,9 @@ def create_error_table(
     elif table_type == "QdivRMSE":
         table.field_names = [
             "config_type",
-            "RMSE Qdiv",
-            "MAE Qdiv",
-            "Q95 Qdiv",
+            "RMSE Qdiv / e",
+            "MAE Qdiv / e",
+            "Q95 Qdiv / e",
         ]
 
     for name in sorted(all_data_loaders, key=custom_key):

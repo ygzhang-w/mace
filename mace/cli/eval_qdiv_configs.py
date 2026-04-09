@@ -57,11 +57,22 @@ def main() -> None:
 
 
 def run(args: argparse.Namespace) -> None:
-    torch_tools.set_default_dtype(args.default_dtype)
     device = torch_tools.init_device(args.device)
 
-    # Load model
+    # Load model and reconcile dtype
     model = torch.load(f=args.model, map_location=args.device)
+    model_dtype = next(model.parameters()).dtype
+    if model_dtype == torch.float64:
+        default_dtype = "float64"
+    elif model_dtype == torch.float32:
+        default_dtype = "float32"
+    else:
+        default_dtype = args.default_dtype
+    if default_dtype != args.default_dtype:
+        print(
+            f"Model dtype is {default_dtype}, overriding --default_dtype={args.default_dtype}"
+        )
+    torch_tools.set_default_dtype(default_dtype)
     model = model.to(device)
     for param in model.parameters():
         param.requires_grad = False

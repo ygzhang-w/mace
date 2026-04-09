@@ -155,9 +155,10 @@ class MACECalculator(Calculator):
             "EnergyDipoleMACE",
             "DipolePolarizabilityMACE",
             "PolarMACE",
+            "AtomicQdivMACE",
         ]:
             raise ValueError(
-                f"Give a valid model_type: [MACE, PolarMACE, DipoleMACE, DipolePolarizabilityMACE, EnergyDipoleMACE], {model_type} not supported"
+                f"Give a valid model_type: [MACE, PolarMACE, DipoleMACE, DipolePolarizabilityMACE, EnergyDipoleMACE, AtomicQdivMACE], {model_type} not supported"
             )
 
         # superclass constructor initializes self.implemented_properties to an empty list
@@ -670,3 +671,26 @@ class MACECalculator(Calculator):
         if self.num_models == 1:
             return descriptors[0]
         return descriptors
+
+    def get_qdiv(self, atoms=None):
+        """Predict per-atom qdiv values using an AtomicQdivMACE model.
+        :param atoms: ase.Atoms object
+        :return: np.ndarray of shape [n_atoms] if num_models is 1, or list[np.ndarray] otherwise
+        """
+        if atoms is None and self.atoms is None:
+            raise ValueError("atoms not set")
+        if atoms is None:
+            atoms = self.atoms
+        if self.model_type != "AtomicQdivMACE":
+            raise NotImplementedError("Only implemented for AtomicQdivMACE models")
+        batch = self._atoms_to_batch(atoms)
+        qdivs = [
+            model(self._clone_batch(batch).to_dict())["qdiv"]
+            .detach()
+            .cpu()
+            .numpy()
+            for model in self.models
+        ]
+        if self.num_models == 1:
+            return qdivs[0]
+        return qdivs

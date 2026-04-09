@@ -8,6 +8,7 @@ import pytest
 from ase.atoms import Atoms
 
 run_train = Path(__file__).parent.parent / "mace" / "cli" / "run_train.py"
+eval_qdiv_configs = Path(__file__).parent.parent / "mace" / "cli" / "eval_qdiv_configs.py"
 
 
 @pytest.fixture(name="qdiv_configs")
@@ -90,7 +91,9 @@ def fixture_qdiv_configs_with_bias():
     for _ in range(20):
         c = water.copy()
         c.positions += np.random.normal(0.1, size=c.positions.shape)
-        qdiv = np.array([element_bias[z] + np.random.normal(0, 0.05) for z in c.numbers])
+        qdiv = np.array(
+            [element_bias[z] + np.random.normal(0, 0.05) for z in c.numbers]
+        )
         c.new_array("REF_qdiv", qdiv)
         fit_configs.append(c)
     return fit_configs
@@ -196,3 +199,70 @@ def test_get_qdiv(tmp_path, qdiv_configs):
 
     assert isinstance(qdiv, np.ndarray)
     assert qdiv.shape == (len(atoms),)
+
+
+def test_eval_qdiv_configs(tmp_path, qdiv_configs):
+    """Test eval_qdiv_configs CLI produces output with predicted qdiv."""
+    ase.io.write(tmp_path / "fit.xyz", qdiv_configs)
+
+    # Train a model first
+    mace_params = {
+        "name": "MACE_qdiv_eval",
+        "valid_fraction": 0.1,
+        "qdiv_weight": 1.0,
+        "model": "AtomicQdivMACE",
+        "hidden_irreps": "32x0e",
+        "r_max": 3.5,
+        "batch_size": 5,
+        "max_num_epochs": 2,
+        "swa": None,
+        "start_swa": 5,
+        "ema": None,
+        "ema_decay": 0.99,
+        "amsgrad": None,
+        "restart_latest": None,
+        "device": "cpu",
+        "seed": 42,
+        "loss": "qdiv",
+        "error_table": "QdivRMSE",
+        "qdiv_key": "REF_qdiv",
+        "checkpoints_dir": str(tmp_path),
+        "model_dir": str(tmp_path),
+        "train_file": str(tmp_path / "fit.xyz"),
+        "E0s": "{8: 0.0, 1: 0.0}",
+        "eval_interval": 2,
+        "use_reduced_cg": False,
+    }
+
+    cmd = [sys.executable, str(run_train)]
+    for k, v in mace_params.items():
+        if v is not None:
+            cmd.append(f"--{k}={v}")
+        else:
+            cmd.append(f"--{k}")
+
+    p = subprocess.run(cmd, check=True, capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+
+    model_path = tmp_path / "MACE_qdiv_eval.model"
+    assert model_path.exists()
+
+    # Run eval
+    output_path = tmp_path / "qdiv_pred.xyz"
+    eval_cmd = [
+        sys.executable,
+        str(eval_qdiv_configs),
+        f"--configs={tmp_path / 'fit.xyz'}",
+        f"--model={model_path}",
+        f"--output={output_path}",
+        "--qdiv_key=REF_qdiv",
+    ]
+    p = subprocess.run(eval_cmd, check=True, capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+
+    # Check output
+    atoms_list = ase.io.read(str(output_path), index=":")
+    assert len(atoms_list) == len(qdiv_configs)
+    for atoms in atoms_list:
+        assert "MACE_qdiv" in atoms.arrays
+        assert atoms.arrays["MACE_qdiv"].shape == (len(atoms),)

@@ -685,10 +685,7 @@ class MACECalculator(Calculator):
             raise NotImplementedError("Only implemented for AtomicQdivMACE models")
         batch = self._atoms_to_batch(atoms)
         qdivs = [
-            model(self._clone_batch(batch).to_dict())["qdiv"]
-            .detach()
-            .cpu()
-            .numpy()
+            model(self._clone_batch(batch).to_dict())["qdiv"].detach().cpu().numpy()
             for model in self.models
         ]
         if self.num_models == 1:

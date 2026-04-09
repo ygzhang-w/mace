@@ -107,9 +107,7 @@ def run(args: argparse.Namespace) -> None:
     # Check for reference qdiv and compute errors
     has_ref = all(args.qdiv_key in atoms.arrays for atoms in atoms_list)
     if has_ref:
-        all_ref = np.concatenate(
-            [atoms.arrays[args.qdiv_key] for atoms in atoms_list]
-        )
+        all_ref = np.concatenate([atoms.arrays[args.qdiv_key] for atoms in atoms_list])
         all_pred = np.concatenate(qdiv_list)
         rmse = np.sqrt(np.mean((all_ref - all_pred) ** 2))
         mae = np.mean(np.abs(all_ref - all_pred))
